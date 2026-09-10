@@ -162,7 +162,7 @@ jobs:
           write_readme() {
             local dir=$1
             local run_cmd=$2
-            printf '【OpenStick 傻瓜一键刷机工具 %s】\n\n适用设备：高通410系列随身WiFi（UFI001B/C、UFI003、SP970 等）\n\n使用步骤：\n1. 将 boot.img 和 system.img 放入 rom 文件夹\n2. 按住设备上的 音量- 键不松开\n3. 将 USB 线插入电脑\n4. %s\n5. 等待自动完成（约3-5分钟），全程无需任何操作\n\n注意：\n- 刷机过程中请勿拔出 USB\n- 基带会自动备份到 backup_日期时间 文件夹\n- 无需安装任何驱动\n\n固件下载：https://github.com/x7780/immortalwrt-Actios\n' \
+              printf '【OpenStick 傻瓜一键刷机工具 %s】\n\n适用设备：高通410系列随身WiFi（UFI001B/C、UFI003、SP970 等）\n\n使用步骤：\n1. 将 boot.img 和 system.img 放入 rom 文件夹\n2. 按住设备上的 音量- 键不松开\n3. 将 USB 线插入电脑\n4. %s\n5. 等待自动完成（约3-5分钟），全程无需任何操作\n\n注意：\n- 刷机过程中请勿拔出 USB\n- 基带会自动备份到 backup_日期时间 文件夹\n- 无需安装任何驱动\n\n固件下载：https://github.com/dagoujjj/410-wrt-build\n' \
               "$VERSION" "$run_cmd" > "$dir/使用说明.txt"
           }
 
@@ -227,7 +227,8 @@ jobs:
             | `OpenStick刷机工具_Linux_arm64_*.tar.gz` | Linux ARM64 |
 
             ### 固件下载
-            https://github.com/x7780/immortalwrt-Actios
+            https://github.com/dagoujjj/410-wrt-build
+              https://github.com/dagoujjj/410-wrt-build
           artifacts: "dist/*.zip,dist/*.tar.gz"
           allowUpdates: true
           draft: false

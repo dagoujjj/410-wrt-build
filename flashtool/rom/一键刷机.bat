@@ -6,7 +6,7 @@ echo        OpenStick 一键刷机工具
 echo ============================================
 echo.
 echo  如需下载对应设备的 OpenWrt 固件包，请访问：
-echo  https://github.com/x7780/immortalwrt-Actios
+echo  https://github.com/dagoujjj/410-wrt-build
 echo.
 echo ============================================
 echo.
@@ -104,7 +104,7 @@ echo ============================================
 echo           刷机完成！
 echo.
 echo  如需更换更好玩 OpenWrt ，请访问：
-echo  https://github.com/x7780/immortalwrt-Actios
+echo  https://github.com/dagoujjj/410-wrt-build
 echo  下载对应设备的固件包后替换 rootfs.img 重新刷入
 echo ============================================
 echo.

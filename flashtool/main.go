@@ -55,10 +55,10 @@ func main() {
 	bootImg := filepath.Join(romDir, "boot.img")
 	systemImg := filepath.Join(romDir, "system.img")
 	if _, err := os.Stat(bootImg); os.IsNotExist(err) {
-		fatal("缺少 rom/boot.img\n  请从以下地址下载固件后放入 rom 文件夹：\n  https://github.com/x7780/immortalwrt-Actios")
+		   fatal("缺少 rom/boot.img\n  请从以下地址下载固件后放入 rom 文件夹：\n  https://github.com/dagoujjj/410-wrt-build")
 	}
 	if _, err := os.Stat(systemImg); os.IsNotExist(err) {
-		fatal("缺少 rom/system.img\n  请从以下地址下载固件后放入 rom 文件夹：\n  https://github.com/x7780/immortalwrt-Actios")
+		   fatal("缺少 rom/system.img\n  请从以下地址下载固件后放入 rom 文件夹：\n  https://github.com/dagoujjj/410-wrt-build")
 	}
 	fmt.Printf("  %s✓%s 底层固件：完整\n", colorGreen, colorReset)
 	fmt.Printf("  %s✓%s boot.img：就绪\n", colorGreen, colorReset)
@@ -237,7 +237,7 @@ func printBanner() {
 	fmt.Printf("  ║     版本：%-32s║\n", Version)
 	fmt.Println("  ╚══════════════════════════════════════════╝")
 	fmt.Println(colorReset)
-	fmt.Println("  固件下载：https://github.com/x7780/immortalwrt-Actios")
+	fmt.Println("  固件下载：https://github.com/dagoujjj/410-wrt-build")
 	fmt.Println()
 }
 

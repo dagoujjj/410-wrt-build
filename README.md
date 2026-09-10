@@ -139,7 +139,7 @@
 
 ## 特别感谢
 
-- [xuxin1955/Actions-immortalwrt](https://github.com/xuxin1955/Actions-immortalwrt) 感谢作者提供技术
+- [xuxin1955/Actions](https://github.com/xuxin1955/Actions) 感谢作者提供技术
 - [lkiuyu/immortalwrt](https://github.com/lkiuyu/immortalwrt) 感谢作者对驱动和内核修正
 
 ## Credits

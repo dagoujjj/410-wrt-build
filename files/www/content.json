@@ -3,7 +3,7 @@
   "nav": [
     {
       "text": "openwrt讨论社区",
-      "url": "https://github.com/x7780/immortalwrt-Actios/discussions"
+      "url": "https://github.com/dagoujjj/410-wrt-build/discussions"
     },
     {
       "text": "购买设备",
@@ -41,7 +41,7 @@
             "# 刷机前请备份分区，或者备份好modem.7z基带。",
             "# 基带在首页下载区，这个非常重要，丢失无法找回",
             "# 1.利用github自定义全新固件",
-            "https://github.com/x7780/immortalwrt-Actios",
+            "https://github.com/dagoujjj/410-wrt-build",
             "# 2.升级最新固件发现手机卡蜂窝不能用，请还原基带。",
             "#/lib/firmware  #把基带还原到这个目录"
           ]
@@ -148,12 +148,12 @@
     {
       "title": "高通410随身wifi玩法讨论社区",
       "meta": "github · github.com",
-      "url": "https://github.com/x7780/immortalwrt-Actios/discussions"
+      "url": "https://github.com/dagoujjj/410-wrt-build/discussions"
     },
     {
       "title": "极简的openwrt固件刷机包",
       "meta": "github · github.com",
-      "url": "https://github.com/x7780/Actions-immortalwrt"
+      "url": "https://github.com/xuxin1955/Actions"
     },
     {
       "title": "高通 410 9008 模式 + 刷 Debian 13 图文",

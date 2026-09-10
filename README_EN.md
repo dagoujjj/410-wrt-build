@@ -146,7 +146,7 @@ Reduces firmware size by approx. 50–100 MB:
 
 ## Special Thanks
 
-- [xuxin1955/Actions-immortalwrt](https://github.com/xuxin1955/Actions-immortalwrt) — Thanks to the author for the technology
+- [xuxin1955/Actions](https://github.com/xuxin1955/Actions) — Thanks to the author for the technology
 - [lkiuyu/immortalwrt](https://github.com/lkiuyu/immortalwrt) — Thanks to the author for driver and kernel fixes
 
 ## Credits

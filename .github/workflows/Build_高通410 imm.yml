@@ -59,6 +59,7 @@ env:
   UPLOAD_BIN_DIR: false
   UPLOAD_FIRMWARE: true
   UPLOAD_RELEASE: true
+  DOWNLOAD_MIRROR: https://sources.cdn.openwrt.org;https://sources.openwrt.org;https://mirror2.openwrt.org/sources
   TZ: Asia/Shanghai
 
 jobs:
@@ -257,10 +258,25 @@ jobs:
       id: package
       timeout-minutes: 60
       run: |
+        set -o pipefail
         cd openwrt
-        timeout --signal=TERM --kill-after=5m 50m make download -j1 V=s
+        timeout --signal=TERM --kill-after=5m 50m make download -j1 V=s 2>&1 | tee "$GITHUB_WORKSPACE/download.log"
+        download_status=${PIPESTATUS[0]}
+        if [ "$download_status" -ne 0 ]; then
+          echo "::error::软件包下载失败，以下是失败项："
+          grep -Ein '403|404|failed|not found|cannot fetch|error' "$GITHUB_WORKSPACE/download.log" || true
+          exit "$download_status"
+        fi
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
+
+    - name: Upload download diagnostics
+      if: failure() && steps.package.conclusion == 'failure'
+      uses: actions/upload-artifact@v4
+      with:
+        name: download-diagnostics
+        path: download.log
+        if-no-files-found: ignore
 
     - name: 查看 openwrt 目录
       run: ls -la openwrt/

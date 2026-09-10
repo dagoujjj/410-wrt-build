@@ -97,7 +97,8 @@ jobs:
 
     - name: mkbootimg build
       run: |
-        wget --fail --retry-connrefused --waitretry=5 --tries=5 --timeout=30 \
+        curl --fail --location --retry 5 --retry-delay 5 --connect-timeout 30 \
+          --output mkbootimg_34.0.5-12build1_all.deb \
           https://github.com/xuxin1955/depend_ubuntu2204_openwrt/releases/download/ubuntu_26.04_LTS_mkbootimg/mkbootimg_34.0.5-12build1_all.deb
         sudo dpkg -i mkbootimg_34.0.5-12build1_all.deb
         sudo apt-get install -f -y
@@ -313,7 +314,7 @@ jobs:
 
     - name: Organize files
       id: organize
-      if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
+      if: env.UPLOAD_FIRMWARE == 'true' && steps.compile.outputs.status == 'success' && !cancelled()
       run: |
         cd openwrt/bin/targets/*/*
         rm -rf packages
@@ -359,7 +360,7 @@ jobs:
 
     - name: Generate release tag
       id: tag
-      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+      if: env.UPLOAD_RELEASE == 'true' && steps.organize.outputs.status == 'success' && !cancelled()
       run: |
         PROFILE=${{ github.event.inputs.profile }}
         # 提取用户设置的 IP 和主机名

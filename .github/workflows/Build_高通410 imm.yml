@@ -286,7 +286,10 @@ jobs:
       run: |
         cd openwrt
         echo -e "$(nproc) thread compile"
-        timeout --signal=TERM --kill-after=5m 105m bash -c 'make -j"$(nproc)" || make -j1 V=s'
+        if ! timeout --signal=TERM --kill-after=5m 90m make -j"$(nproc)"; then
+          echo "并行编译失败，开始单线程详细重试"
+          timeout --signal=TERM --kill-after=5m 25m make -j1 V=s
+        fi
         echo "status=success" >> $GITHUB_OUTPUT
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV

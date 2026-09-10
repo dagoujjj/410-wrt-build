@@ -64,6 +64,7 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 240
     permissions:
       contents: write
       actions: write
@@ -144,12 +145,14 @@ jobs:
         fi
 
     - name: Clone source code
+      timeout-minutes: 15
       working-directory: /mnt
       run: |
-        df -hT $PWD
-        git clone $REPO_URL -b $REPO_BRANCH openwrt
+        set -Eeuo pipefail
+        df -hT "$PWD"
+        timeout --signal=TERM --kill-after=2m 12m git clone --depth 1 "$REPO_URL" -b "$REPO_BRANCH" openwrt
         if [ -n "${{ steps.lock.outputs.locked_hash }}" ]; then
-          cd openwrt && git checkout ${{ steps.lock.outputs.locked_hash }}
+          cd openwrt && timeout --signal=TERM --kill-after=2m 3m git fetch --depth 1 origin "${{ steps.lock.outputs.locked_hash }}" && git checkout "${{ steps.lock.outputs.locked_hash }}"
         fi
         ln -sf /mnt/openwrt $GITHUB_WORKSPACE/openwrt
 
@@ -166,7 +169,8 @@ jobs:
         
 
     - name: Update feeds
-      run: cd openwrt && ./scripts/feeds update -a
+      timeout-minutes: 30
+      run: timeout --signal=TERM --kill-after=2m 25m bash -c 'cd openwrt && ./scripts/feeds update -a'
 
     - name: Remove conflicting packages from smpackage
       run: |
@@ -178,7 +182,6 @@ jobs:
 
     - name: Load custom configuration
       run: |
-        [ -e files ] && mv files openwrt/files
         [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
         chmod +x $DIY_P2_SH
         cd openwrt
@@ -250,9 +253,10 @@ jobs:
        
     - name: Download package
       id: package
+      timeout-minutes: 60
       run: |
         cd openwrt
-        make download -j4 V=s
+        timeout --signal=TERM --kill-after=5m 50m make download -j4 V=s
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
 
@@ -276,10 +280,11 @@ jobs:
 
     - name: Compile the firmware
       id: compile
+      timeout-minutes: 120
       run: |
         cd openwrt
         echo -e "$(nproc) thread compile"
-        make -j$(nproc) || make -j1 V=s
+        timeout --signal=TERM --kill-after=5m 105m bash -c 'make -j"$(nproc)" || make -j1 V=s'
         echo "status=success" >> $GITHUB_OUTPUT
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
@@ -405,6 +410,7 @@ jobs:
     - name: Upload firmware to release
       if: env.UPLOAD_RELEASE == 'true' && steps.organize.outputs.status == 'success'
       uses: ncipollo/release-action@main
+      timeout-minutes: 15
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
@@ -418,12 +424,15 @@ jobs:
 
     - name: Delete old workflow runs via GitHub API
       if: always()
+      timeout-minutes: 5
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         RETAIN_DAYS: 7
         KEEP_MINIMUM_RUNS: 5
       run: |
+        set -Eeuo pipefail
         RUNS=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+          --connect-timeout 10 --max-time 30 \
           "https://api.github.com/repos/${{ github.repository }}/actions/runs?per_page=100")
         CUTOFF=$(date -d "-${RETAIN_DAYS} days" +%s)
         DEL_IDS=$(echo "$RUNS" | jq -r --arg cutoff "$CUTOFF" --argjson keep "$KEEP_MINIMUM_RUNS" '
@@ -440,7 +449,8 @@ jobs:
         else
           echo "$DEL_IDS" | while read run_id; do
             echo "Deleting run $run_id"
-            curl -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
+            curl --fail --silent --show-error -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
+              --connect-timeout 10 --max-time 30 \
               "https://api.github.com/repos/${{ github.repository }}/actions/runs/$run_id"
           done
         fi

@@ -127,7 +127,7 @@ jobs:
 
       - name: 编译 Linux arm64
         working-directory: flashtool
-        continue-on-error: true
+        timeout-minutes: 15
         env:
           GOOS: linux
           GOARCH: arm64
@@ -155,6 +155,7 @@ jobs:
           fi
 
       - name: 打包发布包
+        timeout-minutes: 10
         run: |
           ROM_DIR="flashtool/rom"
           VERSION="${{ github.event.inputs.version }}"

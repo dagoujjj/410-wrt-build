@@ -97,7 +97,8 @@ jobs:
 
     - name: mkbootimg build
       run: |
-        wget https://github.com/xuxin1955/depend_ubuntu2204_openwrt/releases/download/ubuntu_26.04_LTS_mkbootimg/mkbootimg_34.0.5-12build1_all.deb
+        wget --fail --retry-connrefused --waitretry=5 --tries=5 --timeout=30 \
+          https://github.com/xuxin1955/depend_ubuntu2204_openwrt/releases/download/ubuntu_26.04_LTS_mkbootimg/mkbootimg_34.0.5-12build1_all.deb
         sudo dpkg -i mkbootimg_34.0.5-12build1_all.deb
         sudo apt-get install -f -y
         # 验证安装
@@ -256,7 +257,7 @@ jobs:
       timeout-minutes: 60
       run: |
         cd openwrt
-        timeout --signal=TERM --kill-after=5m 50m make download -j4 V=s
+        timeout --signal=TERM --kill-after=5m 50m make download -j1 V=s
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
 

@@ -368,6 +368,20 @@ jobs:
         [[ "$OPKG_FIRST_ENTRY" == "${OPKG_NAME}/"* ]] || { echo "opkg 归档顶层目录异常: $OPKG_FIRST_ENTRY" >&2; exit 1; }
         echo "Prepared $OPKG_ARCHIVE"
 
+    - name: Prefetch large tarballs with aria2c
+      timeout-minutes: 30
+      run: |
+        set -Eeuo pipefail
+        cd openwrt
+        mkdir -p dl
+        ARIA2C="aria2c --console-log-level=warn --summary-interval=0 -x8 -s8 -k1M --max-tries=8 --retry-wait=3 --timeout=60 --connect-timeout=20 --allow-overwrite=true --auto-file-renaming=false --continue=true --dir=dl"
+        # Linux kernel tarball (~140MB) pinned to the locked upstream commit.
+        KERNEL_VERSION="6.12.85"
+        KERNEL_HASH="e35ac999f40a6874493d8d60f33f1150d7a89ae5841c428da82257fbcd070aed"
+        $ARIA2C "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${KERNEL_VERSION}.tar.xz"
+        echo "${KERNEL_HASH}  dl/linux-${KERNEL_VERSION}.tar.xz" | sha256sum -c -
+        echo "Kernel tarball prefetched with aria2c (multithreaded)."
+
     - name: Download package
       id: package
       timeout-minutes: 90

@@ -294,11 +294,14 @@ jobs:
           git clone --filter=blob:none --no-checkout https://git.openwrt.org/project/opkg-lede.git /tmp/$OPKG_NAME
           git -C /tmp/$OPKG_NAME checkout --force "$OPKG_VERSION"
           TAR_TIMESTAMP=$(git -C /tmp/$OPKG_NAME log -1 --no-show-signature --format='@%ct')
-          git -C /tmp/$OPKG_NAME archive --format=tar HEAD --output=/tmp/$OPKG_NAME.tar
+          git -C /tmp/$OPKG_NAME config core.abbrev 8
+          git -C /tmp/$OPKG_NAME archive --format=tar HEAD --output=/tmp/$OPKG_NAME.tar.git
           tar --numeric-owner --owner=0 --group=0 --ignore-failed-read \
-            -C /tmp/$OPKG_NAME -rf /tmp/$OPKG_NAME.tar .git .gitmodules 2>/dev/null || true
+            -C /tmp/$OPKG_NAME -f /tmp/$OPKG_NAME.tar.git -r .git .gitmodules 2>/dev/null || true
+          rm -rf /tmp/$OPKG_NAME-packed /tmp/$OPKG_NAME
           mkdir -p "/tmp/$OPKG_NAME-packed/$OPKG_NAME"
-          tar -C "/tmp/$OPKG_NAME-packed/$OPKG_NAME" -xf "/tmp/$OPKG_NAME.tar"
+          tar -C "/tmp/$OPKG_NAME-packed/$OPKG_NAME" -xf "/tmp/$OPKG_NAME.tar.git"
+          (cd "/tmp/$OPKG_NAME-packed/$OPKG_NAME" && git submodule update --init --recursive -- && rm -rf .git .gitmodules)
           tar --numeric-owner --owner=0 --group=0 --mode=a-s --sort=name \
             --mtime="$TAR_TIMESTAMP" -C "/tmp/$OPKG_NAME-packed" -c "$OPKG_NAME" | \
             zstd -T0 --ultra -20 -c > "$OPKG_ARCHIVE"

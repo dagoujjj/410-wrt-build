@@ -297,10 +297,11 @@ jobs:
           git -C /tmp/$OPKG_NAME archive --format=tar HEAD --output=/tmp/$OPKG_NAME.tar
           tar --numeric-owner --owner=0 --group=0 --ignore-failed-read \
             -C /tmp/$OPKG_NAME -rf /tmp/$OPKG_NAME.tar .git .gitmodules 2>/dev/null || true
-          mkdir -p /tmp/$OPKG_NAME-packed
-          tar -C /tmp/$OPKG_NAME-packed -xf /tmp/$OPKG_NAME.tar
+          mkdir -p "/tmp/$OPKG_NAME-packed/$OPKG_NAME"
+          tar -C "/tmp/$OPKG_NAME-packed/$OPKG_NAME" -xf "/tmp/$OPKG_NAME.tar"
           tar --numeric-owner --owner=0 --group=0 --mode=a-s --sort=name \
-            --mtime="$TAR_TIMESTAMP" -c "$OPKG_NAME" | zstd -T0 --ultra -20 -c > "$OPKG_ARCHIVE"
+            --mtime="$TAR_TIMESTAMP" -C "/tmp/$OPKG_NAME-packed" -c "$OPKG_NAME" | \
+            zstd -T0 --ultra -20 -c > "$OPKG_ARCHIVE"
           echo "41fb2c79ce6014e28f7dd0cd8c65efe803986278f2587d1d4681883d8847d87c  $OPKG_ARCHIVE" | sha256sum -c -
           rm -rf /tmp/$OPKG_NAME /tmp/$OPKG_NAME.tar /tmp/$OPKG_NAME-packed
         fi

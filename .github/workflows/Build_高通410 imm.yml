@@ -281,6 +281,31 @@ jobs:
       if: steps.package.conclusion == 'success'
       run: rm -f "$GITHUB_WORKSPACE/download.log"
 
+    - name: Prepare opkg source fallback
+      timeout-minutes: 15
+      run: |
+        set -Eeuo pipefail
+        cd openwrt
+        OPKG_VERSION=80503d94e356476250adaf1f669ee955ec26de76
+        OPKG_NAME=opkg-2025.11.05~80503d94
+        OPKG_ARCHIVE="dl/${OPKG_NAME}.tar.zst"
+        if [ ! -f "$OPKG_ARCHIVE" ]; then
+          rm -rf /tmp/$OPKG_NAME
+          git clone --filter=blob:none --no-checkout https://git.openwrt.org/project/opkg-lede.git /tmp/$OPKG_NAME
+          git -C /tmp/$OPKG_NAME checkout --force "$OPKG_VERSION"
+          TAR_TIMESTAMP=$(git -C /tmp/$OPKG_NAME log -1 --no-show-signature --format='@%ct')
+          git -C /tmp/$OPKG_NAME archive --format=tar HEAD --output=/tmp/$OPKG_NAME.tar
+          tar --numeric-owner --owner=0 --group=0 --ignore-failed-read \
+            -C /tmp/$OPKG_NAME -rf /tmp/$OPKG_NAME.tar .git .gitmodules 2>/dev/null || true
+          mkdir -p /tmp/$OPKG_NAME-packed
+          tar -C /tmp/$OPKG_NAME-packed -xf /tmp/$OPKG_NAME.tar
+          tar --numeric-owner --owner=0 --group=0 --mode=a-s --sort=name \
+            --mtime="$TAR_TIMESTAMP" -c "$OPKG_NAME" | zstd -T0 --ultra -20 -c > "$OPKG_ARCHIVE"
+          echo "41fb2c79ce6014e28f7dd0cd8c65efe803986278f2587d1d4681883d8847d87c  $OPKG_ARCHIVE" | sha256sum -c -
+          rm -rf /tmp/$OPKG_NAME /tmp/$OPKG_NAME.tar /tmp/$OPKG_NAME-packed
+        fi
+        echo "Prepared $OPKG_ARCHIVE"
+
     - name: Upload download diagnostics
       if: failure() && steps.package.conclusion == 'failure'
       uses: actions/upload-artifact@v4
@@ -309,14 +334,11 @@ jobs:
 
     - name: Compile the firmware
       id: compile
-      timeout-minutes: 120
+      timeout-minutes: 220
       run: |
         cd openwrt
         echo -e "$(nproc) thread compile"
-        if ! timeout --signal=TERM --kill-after=5m 90m make -j"$(nproc)"; then
-          echo "并行编译失败，开始单线程详细重试"
-          timeout --signal=TERM --kill-after=5m 25m make -j1 V=s
-        fi
+        timeout --signal=TERM --kill-after=5m 210m make -j"$(nproc)"
         echo "status=success" >> $GITHUB_OUTPUT
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV

@@ -39,7 +39,7 @@ on:
         default: lkiuyu/immortalwrt
         required: true
       custom_hash:
-        description: ' ↓ 指定 hash（默认不用填写）↓ '
+        description: ' ↓ 可选：指定上游 commit hash；留空使用最新 master ↓ '
         required: false
         default: ''
         type: string
@@ -160,12 +160,14 @@ jobs:
           echo "locked_hash=$CUSTOM_HASH" >> $GITHUB_OUTPUT
           echo "使用用户指定 hash: $CUSTOM_HASH"
         elif [ -f "$LOCK_FILE" ]; then
-          HASH=$(cat $LOCK_FILE)
-          echo "locked_hash=$HASH" >> $GITHUB_OUTPUT
-          echo "使用锁定 hash: $HASH"
+          # Keep upstream_lock.txt as an audit/reproducibility record, but use
+          # the current branch for normal builds. Pass custom_hash explicitly
+          # when an exact upstream revision is required.
+          echo "locked_hash=" >> $GITHUB_OUTPUT
+          echo "忽略默认锁定 hash，使用最新 ${REPO_BRANCH}；需要复现时请填写 custom_hash"
         else
           echo "locked_hash=" >> $GITHUB_OUTPUT
-          echo "upstream_lock.txt 不存在，使用最新 master"
+          echo "使用最新 ${REPO_BRANCH}"
         fi
 
     - name: Clone source code
@@ -204,50 +206,60 @@ jobs:
     - name: Install feeds
       run: cd openwrt && ./scripts/feeds install -a -f
 
-    - name: Prepare stale openstick source archives
+    - name: Prepare latest trusted Git source archives
+      timeout-minutes: 60
       run: |
         set -Eeuo pipefail
         mkdir -p openwrt/dl
-        # Regenerate source archives for openstick feed packages whose
-        # PKG_MIRROR_HASH no longer matches the GitHub-generated archive of the
-        # pinned commit. Source commit stays pinned; hash verification stays on.
-        prepare_archive() {
-          local tarball="$1" repo="$2" version="$3" subdir="$4" makefile="$5"
-          local archive="openwrt/dl/${tarball}"
-          local tmp="/tmp/${subdir}-source"
+        # Feed Makefiles describe source archives, but several old mirror
+        # copies are gone. Resolve HEAD from each canonical Git repository,
+        # generate the archive locally, and update the feed hash to the bytes
+        # actually placed in dl/. Integrity checking remains enabled.
+        prepare_latest_archive() {
+          local repo="$1" archive="$2" subdir="$3" makefile="$4" compression="$5"
           test -f "$makefile"
-          rm -rf "$tmp" "${tmp}-packed" "${tmp}.tar.git" "$archive"
+          echo "Probing canonical source: $repo"
+          local commit
+          commit=$(git ls-remote --exit-code "$repo" HEAD | awk '$2 == "HEAD" { print $1; exit }')
+          [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || { echo "No usable HEAD for $repo" >&2; exit 1; }
+          echo "Using probed HEAD $commit"
+          sed -i -E "s|^PKG_SOURCE_VERSION:=.*|PKG_SOURCE_VERSION:=$commit|" "$makefile"
+          archive=${archive//\{commit\}/$commit}
+
+          local tmp="/tmp/${subdir}-source" packed="/tmp/${subdir}-packed" git_tar="/tmp/${subdir}.tar.git"
+          rm -rf "$tmp" "$packed" "$git_tar" "openwrt/dl/$archive"
           git clone --filter=blob:none --no-checkout "$repo" "$tmp"
-          git -C "$tmp" checkout --force "$version"
+          git -C "$tmp" checkout --force "$commit"
           git -C "$tmp" config core.abbrev 8
-          local ts
-          ts=$(git -C "$tmp" log -1 --no-show-signature --format='@%ct')
-          git -C "$tmp" archive --format=tar HEAD --output="${tmp}.tar.git"
+          local timestamp
+          timestamp=$(git -C "$tmp" log -1 --no-show-signature --format='@%ct')
+          git -C "$tmp" archive --format=tar HEAD --output="$git_tar"
           tar --numeric-owner --owner=0 --group=0 --ignore-failed-read \
-            -C "$tmp" -f "${tmp}.tar.git" -r .git .gitmodules 2>/dev/null || true
-          mkdir -p "${tmp}-packed/${subdir}"
-          tar -C "${tmp}-packed/${subdir}" -xf "${tmp}.tar.git"
-          (cd "${tmp}-packed/${subdir}" && git submodule update --init --recursive -- && rm -rf .git .gitmodules)
-          tar --numeric-owner --owner=0 --group=0 --mode=a-s --sort=name \
-            --mtime="$ts" -C "${tmp}-packed" -c "$subdir" | xz -zc -7e > "$archive"
+            -C "$tmp" -f "$git_tar" -r .git .gitmodules 2>/dev/null || true
+          mkdir -p "$packed/$subdir"
+          tar -C "$packed/$subdir" -xf "$git_tar"
+          (cd "$packed/$subdir" && git submodule update --init --recursive -- && rm -rf .git .gitmodules)
+          case "$compression" in
+            xz) tar --numeric-owner --owner=0 --group=0 --mode=a-s --sort=name --mtime="$timestamp" -C "$packed" -c "$subdir" | xz -zc -7e > "openwrt/dl/$archive" ;;
+            zst) tar --numeric-owner --owner=0 --group=0 --mode=a-s --sort=name --mtime="$timestamp" -C "$packed" -c "$subdir" | zstd -T0 --ultra -20 -c > "openwrt/dl/$archive" ;;
+            gz) tar --numeric-owner --owner=0 --group=0 --mode=a-s --sort=name --mtime="$timestamp" -C "$packed" -c "$subdir" | gzip -nc > "openwrt/dl/$archive" ;;
+            *) echo "Unsupported compression: $compression" >&2; exit 1 ;;
+          esac
           local hash
-          hash=$(sha256sum "$archive" | awk '{print $1}')
-          sed -i -E "s/^PKG_MIRROR_HASH:=.*/PKG_MIRROR_HASH:=$hash/" "$makefile"
+          hash=$(sha256sum "openwrt/dl/$archive" | awk '{print $1}')
+          sed -i -E "s|^PKG_MIRROR_HASH:=.*|PKG_MIRROR_HASH:=$hash|" "$makefile"
           grep -q "^PKG_MIRROR_HASH:=$hash$" "$makefile"
-          test -s "$archive"
-          rm -rf "$tmp" "${tmp}-packed" "${tmp}.tar.git"
-          echo "Prepared $archive with hash $hash"
+          test -s "openwrt/dl/$archive"
+          echo "Prepared and verified openwrt/dl/$archive ($hash)"
+          rm -rf "$tmp" "$packed" "$git_tar"
         }
-        prepare_archive "gc-20260310.tar.xz" \
-          https://github.com/lkiuyu/gc.git \
-          1e2b4d9480cf75663212a2bb7c550f3aae07ef50 \
-          gc-20260310 \
-          openwrt/feeds/openstick/utils/gc/Makefile
-        prepare_archive "libusbgx-0.3.0.tar.xz" \
-          https://github.com/linux-usb-gadgets/libusbgx.git \
-          dbedf16f80c5b4e1807ea4f80cc89d1f15d36f0a \
-          libusbgx-0.3.0 \
-          openwrt/feeds/openstick/libs/libusbgx/Makefile
+        prepare_latest_archive https://github.com/lkiuyu/gc.git gc-20260310.tar.xz gc-20260310 openwrt/feeds/openstick/utils/gc/Makefile xz
+        prepare_latest_archive https://github.com/linux-usb-gadgets/libusbgx.git libusbgx-0.3.0.tar.xz libusbgx-0.3.0 openwrt/feeds/openstick/libs/libusbgx/Makefile xz
+        prepare_latest_archive https://github.com/linux-msm/qrtr.git qrtr-1.1.tar.xz qrtr-1.1 openwrt/feeds/openstick/utils/qrtr/Makefile xz
+        prepare_latest_archive https://github.com/lkiuyu/qcom-firmware.git qcom-firmware-1034.2.4.tar.xz qcom-firmware-1034.2.4 openwrt/feeds/openstick/firmware/qcom-firmware/Makefile xz
+        prepare_latest_archive https://github.com/lkiuyu/android-tools.git 'android-tools-4.2.2-{commit}.tar.gz' android-tools-4.2.2 openwrt/feeds/openstick/utils/android-tools/Makefile gz
+        prepare_latest_archive https://github.com/linux-msm/rmtfs.git rmtfs-1.1.1.tar.xz rmtfs-1.1.1 openwrt/feeds/openstick/utils/rmtfs/Makefile xz
+        prepare_latest_archive https://github.com/linux-mobile-broadband/ModemManager.git modemmanager-1.24.0.tar.zst modemmanager-1.24.0 openwrt/feeds/openstick/net/modemmanager/Makefile zst
 
     - name: Load custom configuration
       run: |
@@ -391,7 +403,11 @@ jobs:
         # Prefer GitHub source archives over distfile mirrors when both exist.
         # A mirror that returns 200 with an HTML error page is worse than a clean 404.
         export DOWNLOAD_MIRROR="https://sources.cdn.openwrt.org;https://sources.openwrt.org;https://mirror2.openwrt.org/sources"
-        export ARIA2C="aria2c --console-log-level=warn --summary-interval=0 -x4 -s4 -k1M --max-tries=5 --retry-wait=3 --timeout=30 --connect-timeout=15 --allow-overwrite=true --auto-file-renaming=false"
+        # download.pl ignores ARIA2C unless its custom tool is selected.
+        # This makes every HTTP download use the aria2c implementation while
+        # download.pl continues to stream and verify the declared SHA256.
+        export DOWNLOAD_TOOL_CUSTOM=aria2c
+        export ARIA2C_OPTIONS="--console-log-level=warn --summary-interval=0 -x8 -s8 -k1M --max-tries=8 --retry-wait=3 --timeout=60 --connect-timeout=20 --allow-overwrite=true --auto-file-renaming=false"
         run_download() {
           timeout --signal=TERM --kill-after=5m 80m make download -j"$(nproc)" V=s 2>&1 | tee -a "$GITHUB_WORKSPACE/download.log"
           return "${PIPESTATUS[0]}"

@@ -344,7 +344,11 @@ jobs:
           rm -rf "/tmp/$OPKG_NAME" "/tmp/$OPKG_NAME-packed" "/tmp/$OPKG_NAME.tar.git"
         fi
         test -s "$OPKG_ARCHIVE"
-        tar --zstd -tf "$OPKG_ARCHIVE" | grep -q "^${OPKG_NAME}/"
+        # Capture the listing before checking it: a direct tar | grep -q pipe
+        # gives tar SIGPIPE when grep exits first (exit 2 under set -e,
+        # observed in run 34601383285).
+        OPKG_FIRST_ENTRY=$(tar --zstd -tf "$OPKG_ARCHIVE" | sed -n '1p')
+        [[ "$OPKG_FIRST_ENTRY" == "${OPKG_NAME}/"* ]] || { echo "opkg 归档顶层目录异常: $OPKG_FIRST_ENTRY" >&2; exit 1; }
         echo "Prepared $OPKG_ARCHIVE"
 
     - name: Download package

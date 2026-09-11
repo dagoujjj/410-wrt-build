@@ -81,12 +81,12 @@ jobs:
     - name: Free Disk Space (Ubuntu)
       uses: jlumbroso/free-disk-space@main
       with:
-        tool-cache: false
+        tool-cache: true
         android: false
-        dotnet: false
-        haskell: false
-        large-packages: false
-        docker-images: false
+        dotnet: true
+        haskell: true
+        large-packages: true
+        docker-images: true
         swap-storage: true
         
     - name: Initialization environment
@@ -127,6 +127,13 @@ jobs:
        python3 -m pip install Unidecode pyelftools
        python3 -m pip --version
        python3 -c "import setuptools.build_meta; print('setuptools.build_meta OK')"
+
+    - name: Reclaim disk space before build
+      run: |
+        sudo rm -rf /var/lib/apt/lists/* /var/cache/apt/*
+        rm -rf "$HOME/.cache/pip" "$HOME/.cache"/go-build
+        rm -f mkbootimg_34.0.5-12build1_all.deb
+        df -hT
 
 
 
@@ -269,6 +276,10 @@ jobs:
         fi
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
+
+    - name: Remove download diagnostics after success
+      if: steps.package.conclusion == 'success'
+      run: rm -f "$GITHUB_WORKSPACE/download.log"
 
     - name: Upload download diagnostics
       if: failure() && steps.package.conclusion == 'failure'

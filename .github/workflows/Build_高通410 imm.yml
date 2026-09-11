@@ -202,35 +202,50 @@ jobs:
     - name: Install feeds
       run: cd openwrt && ./scripts/feeds install -a -f
 
-    - name: Prepare gc source archive for this runner
+    - name: Prepare stale openstick source archives
       run: |
         set -Eeuo pipefail
-        GC_MAKEFILE="openwrt/feeds/openstick/utils/gc/Makefile"
-        GC_VERSION="1e2b4d9480cf75663212a2bb7c550f3aae07ef50"
-        GC_NAME="gc-20260310"
-        GC_ARCHIVE="openwrt/dl/${GC_NAME}.tar.xz"
-        GC_TMP="/tmp/${GC_NAME}-source"
-        test -f "$GC_MAKEFILE"
         mkdir -p openwrt/dl
-        rm -rf "$GC_TMP" "${GC_TMP}-packed" "${GC_TMP}.tar.git" "$GC_ARCHIVE"
-        git clone --filter=blob:none --no-checkout https://github.com/lkiuyu/gc.git "$GC_TMP"
-        git -C "$GC_TMP" checkout --force "$GC_VERSION"
-        git -C "$GC_TMP" config core.abbrev 8
-        GC_TIMESTAMP=$(git -C "$GC_TMP" log -1 --no-show-signature --format='@%ct')
-        git -C "$GC_TMP" archive --format=tar HEAD --output="${GC_TMP}.tar.git"
-        tar --numeric-owner --owner=0 --group=0 --ignore-failed-read \
-          -C "$GC_TMP" -f "${GC_TMP}.tar.git" -r .git .gitmodules 2>/dev/null || true
-        mkdir -p "${GC_TMP}-packed/$GC_NAME"
-        tar -C "${GC_TMP}-packed/$GC_NAME" -xf "${GC_TMP}.tar.git"
-        (cd "${GC_TMP}-packed/$GC_NAME" && git submodule update --init --recursive -- && rm -rf .git .gitmodules)
-        tar --numeric-owner --owner=0 --group=0 --mode=a-s --sort=name \
-          --mtime="$GC_TIMESTAMP" -C "${GC_TMP}-packed" -c "$GC_NAME" | \
-          xz -zc -7e > "$GC_ARCHIVE"
-        GC_HASH=$(sha256sum "$GC_ARCHIVE" | awk '{print $1}')
-        sed -i -E "s/^PKG_MIRROR_HASH:=.*/PKG_MIRROR_HASH:=$GC_HASH/" "$GC_MAKEFILE"
-        grep -q "^PKG_MIRROR_HASH:=$GC_HASH$" "$GC_MAKEFILE"
-        test -s "$GC_ARCHIVE"
-        echo "Prepared $GC_ARCHIVE with hash $GC_HASH"
+        # Regenerate source archives for openstick feed packages whose
+        # PKG_MIRROR_HASH no longer matches the GitHub-generated archive of the
+        # pinned commit. Source commit stays pinned; hash verification stays on.
+        prepare_archive() {
+          local tarball="$1" repo="$2" version="$3" subdir="$4" makefile="$5"
+          local archive="openwrt/dl/${tarball}"
+          local tmp="/tmp/${subdir}-source"
+          test -f "$makefile"
+          rm -rf "$tmp" "${tmp}-packed" "${tmp}.tar.git" "$archive"
+          git clone --filter=blob:none --no-checkout "$repo" "$tmp"
+          git -C "$tmp" checkout --force "$version"
+          git -C "$tmp" config core.abbrev 8
+          local ts
+          ts=$(git -C "$tmp" log -1 --no-show-signature --format='@%ct')
+          git -C "$tmp" archive --format=tar HEAD --output="${tmp}.tar.git"
+          tar --numeric-owner --owner=0 --group=0 --ignore-failed-read \
+            -C "$tmp" -f "${tmp}.tar.git" -r .git .gitmodules 2>/dev/null || true
+          mkdir -p "${tmp}-packed/${subdir}"
+          tar -C "${tmp}-packed/${subdir}" -xf "${tmp}.tar.git"
+          (cd "${tmp}-packed/${subdir}" && git submodule update --init --recursive -- && rm -rf .git .gitmodules)
+          tar --numeric-owner --owner=0 --group=0 --mode=a-s --sort=name \
+            --mtime="$ts" -C "${tmp}-packed" -c "$subdir" | xz -zc -7e > "$archive"
+          local hash
+          hash=$(sha256sum "$archive" | awk '{print $1}')
+          sed -i -E "s/^PKG_MIRROR_HASH:=.*/PKG_MIRROR_HASH:=$hash/" "$makefile"
+          grep -q "^PKG_MIRROR_HASH:=$hash$" "$makefile"
+          test -s "$archive"
+          rm -rf "$tmp" "${tmp}-packed" "${tmp}.tar.git"
+          echo "Prepared $archive with hash $hash"
+        }
+        prepare_archive "gc-20260310.tar.xz" \
+          https://github.com/lkiuyu/gc.git \
+          1e2b4d9480cf75663212a2bb7c550f3aae07ef50 \
+          gc-20260310 \
+          openwrt/feeds/openstick/utils/gc/Makefile
+        prepare_archive "libusbgx-0.3.0.tar.xz" \
+          https://github.com/linux-usb-gadgets/libusbgx.git \
+          dbedf16f80c5b4e1807ea4f80cc89d1f15d36f0a \
+          libusbgx-0.3.0 \
+          openwrt/feeds/openstick/libs/libusbgx/Makefile
 
     - name: Load custom configuration
       run: |

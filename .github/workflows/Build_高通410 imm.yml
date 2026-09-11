@@ -106,7 +106,9 @@ jobs:
         DEBIAN_FRONTEND: noninteractive
       run: |
         sudo -E apt-get -y update
+        sudo -E apt-get -y install aria2
         sudo -E apt-get -y install $(curl -fsSL https://raw.githubusercontent.com/xuxin1955/depend_ubuntu2204_openwrt/refs/heads/main/depend_ubuntu2204_openwrt)
+        aria2c --version | head -1
 
     - name: mkbootimg build
       run: |
@@ -368,23 +370,31 @@ jobs:
 
     - name: Download package
       id: package
-      timeout-minutes: 60
+      timeout-minutes: 90
       run: |
         set -o pipefail
         cd openwrt
-        timeout --signal=TERM --kill-after=5m 50m make download -j1 V=s 2>&1 | tee "$GITHUB_WORKSPACE/download.log"
-        download_status=${PIPESTATUS[0]}
-        if [ "$download_status" -ne 0 ]; then
-          echo "::error::软件包下载失败，以下是失败项："
-          grep -Ein '403|404|failed|not found|cannot fetch|error|wrong hash|hash mismatch|no more mirrors' "$GITHUB_WORKSPACE/download.log" || true
-          exit "$download_status"
-        fi
-        # Mirror misses can be followed by a successful Git fallback. Only fail
-        # on a terminal hash/package error after all fallbacks are exhausted.
-        if grep -Eiq 'No more mirrors to try - giving up|ERROR: package/.*(failed to build|download)' "$GITHUB_WORKSPACE/download.log"; then
-          echo "::error::下载日志包含最终失败，拒绝进入编译阶段"
-          grep -Ein 'No more mirrors to try - giving up|ERROR: package/.*(failed to build|download)' "$GITHUB_WORKSPACE/download.log" || true
-          exit 1
+        # Prefer GitHub source archives over distfile mirrors when both exist.
+        # A mirror that returns 200 with an HTML error page is worse than a clean 404.
+        export DOWNLOAD_MIRROR="https://sources.cdn.openwrt.org;https://sources.openwrt.org;https://mirror2.openwrt.org/sources"
+        export ARIA2C="aria2c --console-log-level=warn --summary-interval=0 -x4 -s4 -k1M --max-tries=5 --retry-wait=3 --timeout=30 --connect-timeout=15 --allow-overwrite=true --auto-file-renaming=false"
+        run_download() {
+          timeout --signal=TERM --kill-after=5m 80m make download -j"$(nproc)" V=s 2>&1 | tee -a "$GITHUB_WORKSPACE/download.log"
+          return "${PIPESTATUS[0]}"
+        }
+        download_status=0
+        run_download || download_status=$?
+        if [ "$download_status" -ne 0 ] || grep -Eiq 'No more mirrors to try - giving up|ERROR: package/.*(failed to build|download)' "$GITHUB_WORKSPACE/download.log"; then
+          echo "::warning::首轮下载存在失败，用 make download -j1 串行重试一轮..."
+          : > "$GITHUB_WORKSPACE/download-retry.log"
+          timeout --signal=TERM --kill-after=5m 60m make download -j1 V=s 2>&1 | tee -a "$GITHUB_WORKSPACE/download-retry.log" || true
+          cat "$GITHUB_WORKSPACE/download-retry.log" >> "$GITHUB_WORKSPACE/download.log"
+          # After the serial retry pass a terminal error is fatal.
+          if grep -Eiq 'No more mirrors to try - giving up|ERROR: package/.*(failed to build|download)' "$GITHUB_WORKSPACE/download.log"; then
+            echo "::error::软件包下载重试后仍失败，以下是失败项："
+            grep -Ein 'No more mirrors to try - giving up|ERROR: package/.*(failed to build|download)' "$GITHUB_WORKSPACE/download.log" || true
+            exit 1
+          fi
         fi
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;

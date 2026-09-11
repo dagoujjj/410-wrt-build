@@ -928,8 +928,8 @@
         if (mcIpElement) mcIpElement.textContent = host;
         if (mcWebElement) mcWebElement.textContent = '8080';
 
-        // ── 远程 content.json 地址 ──
-        const REMOTE_URL = 'https://raw.githubusercontent.com/x7780/suishen-wifi/main/content.json';
+        // ── 使用固件内置、版本控制的 content.json ──
+        const REMOTE_URL = null;
 
         // ── 渲染函数 ──
         function render(data) {
@@ -995,20 +995,11 @@
             }
         }
 
-        // ── 加载逻辑：远程优先 → 本地 content.json ──
+        // ── 加载逻辑：使用本地 content.json，避免第三方内容覆盖固件说明 ──
         async function loadContent() {
-            try {
-                const res = await Promise.race([
-                    fetch(REMOTE_URL + '?t=' + Date.now()),
-                    new Promise((_, reject) => setTimeout(() => reject('timeout'), 4000))
-                ]);
-                const data = await res.json();
-                render(data);
-            } catch {
-                const res = await fetch('./content.json');
-                const data = await res.json();
-                render(data);
-            }
+            const res = await fetch('./content.json', { cache: 'no-store' });
+            if (!res.ok) throw new Error(`content.json HTTP ${res.status}`);
+            render(await res.json());
         }
 
         loadContent();

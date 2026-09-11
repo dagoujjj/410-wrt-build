@@ -120,7 +120,7 @@
 | 序号 | 地址 | 说明 | 使用方法 |
 |-----|-----|------|------|
 | 1 | https://github.com/3899/SimAdmin | 非常好用的sim卡管理工具，作者还在陆续更新 | 进入后台-启动项-本地启动脚本 |
-| 2 | https://picoclaw.io/ | 不占内存的小龙虾，下载linux ARM64 (arm64) 版本解压到设备上| 进入后台-启动项-本地启动脚本 |
+| 2 | https://github.com/sipeed/picoclaw | 不占内存的小龙虾，下载 Linux ARM64 (arm64) 版本解压到设备上 | 进入后台-启动项-本地启动脚本 |
 | 3 | https://pumpkinmc.org/ | 我的世界服务端，运行速度非常快，占用内存小| openwrt需要自行编译版本 |
 ---
 

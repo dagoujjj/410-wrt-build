@@ -51,9 +51,9 @@ cd /root/picoclaw
 
 ### 3. 下载 PicoClaw
 
-请访问 [PicoClaw GitHub 仓库](https://picoclaw.io/) 下载适合你设备架构的版本：
+请访问 [PicoClaw 官方 GitHub 仓库](https://github.com/sipeed/picoclaw/releases) 下载适合你设备架构的版本：
 
-1. 打开浏览器，访问 https://picoclaw.io/
+1. 打开浏览器，访问 https://github.com/sipeed/picoclaw/releases
 2. 下载适合你设备架构的最新版本
 3. 将下载的文件上传到设备的 `/root/picoclaw` 目录
 

@@ -126,7 +126,7 @@ Tired of finding a decent firmware? Software repos won't install, the version is
 | # | URL                               | Description                                                                         | How to Use                               |
 |---|-----------------------------------|-------------------------------------------------------------------------------------|------------------------------------------|
 | 1 | https://github.com/3899/SimAdmin  | Excellent SIM card management tool (actively updated by the author)                 | LuCI → Startup → Local Startup Script    |
-| 2 | https://picoclaw.io/              | Lightweight proxy — download the Linux ARM64 (arm64) build and extract onto device  | LuCI → Startup → Local Startup Script    |
+| 2 | https://github.com/sipeed/picoclaw | Lightweight AI assistant — download the Linux ARM64 (arm64) build and extract onto the device | LuCI → Startup → Local Startup Script |
 | 3 | https://pumpkinmc.org/            | Minecraft server — very fast, low memory footprint                                  | Needs to be compiled for OpenWrt         |
 
 ---

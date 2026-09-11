@@ -50,10 +50,17 @@ on:
         type: string
 
 env:
-  REPO_URL: https://github.com/${{ github.event.inputs.upstream }}
+  # Keep the existing workflow_dispatch inputs compatible. The payload fallback
+  # also makes the declared repository_dispatch trigger usable.
+  INPUT_SSH: ${{ github.event.inputs.ssh || github.event.client_payload.ssh || 'false' }}
+  INPUT_PROFILE: ${{ github.event.inputs.profile || github.event.client_payload.profile || 'ufi003' }}
+  INPUT_UPSTREAM: ${{ github.event.inputs.upstream || github.event.client_payload.upstream || 'lkiuyu/immortalwrt' }}
+  INPUT_CUSTOM_HASH: ${{ github.event.inputs.custom_hash || github.event.client_payload.custom_hash || '' }}
+  INPUT_EXTRA_PACKAGES: ${{ github.event.inputs.extra_packages || github.event.client_payload.extra_packages || '' }}
+  REPO_URL: https://github.com/${{ github.event.inputs.upstream || github.event.client_payload.upstream || 'lkiuyu/immortalwrt' }}
   REPO_BRANCH: master
   FEEDS_CONF: feeds.conf.default
-  CONFIG_FILE: ${{ format('config/{0}.config', github.event.inputs.profile) }}
+  CONFIG_FILE: ${{ format('config/{0}.config', github.event.inputs.profile || github.event.client_payload.profile || 'ufi003') }}
   DIY_P1_SH: diy-part1.sh
   DIY_P2_SH: diy-part2.sh
   UPLOAD_BIN_DIR: false
@@ -62,16 +69,21 @@ env:
   DOWNLOAD_MIRROR: https://sources.cdn.openwrt.org;https://sources.openwrt.org;https://mirror2.openwrt.org/sources
   TZ: Asia/Shanghai
 
+concurrency:
+  group: firmware-${{ github.workflow }}-${{ github.event.inputs.profile || github.event.client_payload.profile || 'ufi003' }}
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 240
+    # Leave room for feeds, downloads, toolchain and full firmware compilation.
+    timeout-minutes: 360
     permissions:
       contents: write
       actions: write
     steps:
     - name: 🚀 编译 (Build)
-      uses: actions/checkout@main
+      uses: actions/checkout@v7.0.1
 
     - name: Show hardware info
       run: |
@@ -79,7 +91,7 @@ jobs:
         ./scripts/show_hardware_info.sh
   
     - name: Free Disk Space (Ubuntu)
-      uses: jlumbroso/free-disk-space@main
+      uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be
       with:
         tool-cache: true
         android: false
@@ -140,7 +152,7 @@ jobs:
     - name: 读取锁定的上游 hash (Read locked upstream hash)
       id: lock
       run: |
-        CUSTOM_HASH="${{ github.event.inputs.custom_hash }}"
+        CUSTOM_HASH="$INPUT_CUSTOM_HASH"
         LOCK_FILE="upstream_lock.txt"
         if [ -n "$CUSTOM_HASH" ]; then
           echo "locked_hash=$CUSTOM_HASH" >> $GITHUB_OUTPUT
@@ -190,6 +202,36 @@ jobs:
     - name: Install feeds
       run: cd openwrt && ./scripts/feeds install -a -f
 
+    - name: Prepare gc source archive for this runner
+      run: |
+        set -Eeuo pipefail
+        GC_MAKEFILE="openwrt/feeds/openstick/utils/gc/Makefile"
+        GC_VERSION="1e2b4d9480cf75663212a2bb7c550f3aae07ef50"
+        GC_NAME="gc-20260310"
+        GC_ARCHIVE="openwrt/dl/${GC_NAME}.tar.xz"
+        GC_TMP="/tmp/${GC_NAME}-source"
+        test -f "$GC_MAKEFILE"
+        mkdir -p openwrt/dl
+        rm -rf "$GC_TMP" "${GC_TMP}-packed" "${GC_TMP}.tar.git" "$GC_ARCHIVE"
+        git clone --filter=blob:none --no-checkout https://github.com/lkiuyu/gc.git "$GC_TMP"
+        git -C "$GC_TMP" checkout --force "$GC_VERSION"
+        git -C "$GC_TMP" config core.abbrev 8
+        GC_TIMESTAMP=$(git -C "$GC_TMP" log -1 --no-show-signature --format='@%ct')
+        git -C "$GC_TMP" archive --format=tar HEAD --output="${GC_TMP}.tar.git"
+        tar --numeric-owner --owner=0 --group=0 --ignore-failed-read \
+          -C "$GC_TMP" -f "${GC_TMP}.tar.git" -r .git .gitmodules 2>/dev/null || true
+        mkdir -p "${GC_TMP}-packed/$GC_NAME"
+        tar -C "${GC_TMP}-packed/$GC_NAME" -xf "${GC_TMP}.tar.git"
+        (cd "${GC_TMP}-packed/$GC_NAME" && git submodule update --init --recursive -- && rm -rf .git .gitmodules)
+        tar --numeric-owner --owner=0 --group=0 --mode=a-s --sort=name \
+          --mtime="$GC_TIMESTAMP" -C "${GC_TMP}-packed" -c "$GC_NAME" | \
+          xz -zc -7e > "$GC_ARCHIVE"
+        GC_HASH=$(sha256sum "$GC_ARCHIVE" | awk '{print $1}')
+        sed -i -E "s/^PKG_MIRROR_HASH:=.*/PKG_MIRROR_HASH:=$GC_HASH/" "$GC_MAKEFILE"
+        grep -q "^PKG_MIRROR_HASH:=$GC_HASH$" "$GC_MAKEFILE"
+        test -s "$GC_ARCHIVE"
+        echo "Prepared $GC_ARCHIVE with hash $GC_HASH"
+
     - name: Load custom configuration
       run: |
         [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
@@ -198,61 +240,75 @@ jobs:
         $GITHUB_WORKSPACE/$DIY_P2_SH
 
     - name: Install extra packages
-      if: ${{ inputs.extra_packages != '' }}
+      if: ${{ env.INPUT_EXTRA_PACKAGES != '' }}
       run: |
+        set -Eeuo pipefail
         cd openwrt
         echo "=========================================="
         echo "User requested extra packages:"
-        echo "${{ inputs.extra_packages }}"
+        printf '%s\n' "$INPUT_EXTRA_PACKAGES"
         echo "=========================================="
 
-        # 提取系统设置参数（__ip__ 和 __hostname__ 前缀）
-        RAW='${{ inputs.extra_packages }}'
-        CUSTOM_IP=$(echo "$RAW" | grep -oP '(?<=__ip__)[^,\s]+' || true)
-        CUSTOM_HOSTNAME=$(echo "$RAW" | grep -oP '(?<=__hostname__)[^,\s]+' || true)
+        # Parse the existing comma/space-separated input without interpolating it
+        # into shell source. __ip__ and __hostname__ remain backward compatible.
+        CUSTOM_IP=""
+        CUSTOM_HOSTNAME=""
+        PACKAGES=()
+        while IFS= read -r token; do
+          [ -z "$token" ] && continue
+          case "$token" in
+            __ip__*)
+              CUSTOM_IP="${token#__ip__}"
+              [[ "$CUSTOM_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || { echo "Invalid __ip__ value" >&2; exit 1; }
+              ;;
+            __hostname__*)
+              CUSTOM_HOSTNAME="${token#__hostname__}"
+              [[ "$CUSTOM_HOSTNAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$ ]] || { echo "Invalid __hostname__ value" >&2; exit 1; }
+              ;;
+            *)
+              [[ "$token" =~ ^[A-Za-z0-9][A-Za-z0-9_.+-]*$ ]] || { echo "Invalid package name: $token" >&2; exit 1; }
+              PACKAGES+=("$token")
+              ;;
+          esac
+        done < <(printf '%s\n' "$INPUT_EXTRA_PACKAGES" | tr ', ' '\n')
 
-        # 应用自定义 IP
         if [ -n "$CUSTOM_IP" ]; then
           echo "🌐 设置管理 IP: $CUSTOM_IP"
           sed -i "s/192\.168\.1\.1/$CUSTOM_IP/g" package/base-files/files/bin/config_generate
         fi
 
-        # 应用自定义主机名
         if [ -n "$CUSTOM_HOSTNAME" ]; then
           echo "🏷️ 设置主机名: $CUSTOM_HOSTNAME"
           sed -i "s/set system\.@system\[0\]\.hostname='ImmortalWrt'/set system.@system[0].hostname='$CUSTOM_HOSTNAME'/" package/base-files/files/bin/config_generate || true
           sed -i "s/option hostname 'ImmortalWrt'/option hostname '$CUSTOM_HOSTNAME'/" package/base-files/files/etc/config/system 2>/dev/null || true
         fi
 
-        # 过滤掉特殊前缀，只处理真正的包名
-        PACKAGES=$(echo "$RAW" | sed 's/,/ /g' | tr ' ' '\n' | grep -v '^__ip__' | grep -v '^__hostname__' | tr '\n' ' ')
-
-        # 检测是否选了 turboacc，如果选了则先执行安装脚本
-        if echo "$PACKAGES" | grep -qw "luci-app-turboacc"; then
+        if printf '%s\n' "${PACKAGES[@]}" | grep -qx "luci-app-turboacc"; then
           echo "⚡ 检测到 luci-app-turboacc，执行 turboacc 安装脚本..."
-          curl -sSL https://raw.githubusercontent.com/mufeng05/turboacc/main/add_turboacc.sh -o add_turboacc.sh && bash add_turboacc.sh || echo "⚠️ turboacc 脚本执行失败，跳过"
+          curl --fail --location --retry 3 --connect-timeout 20 \
+            https://raw.githubusercontent.com/mufeng05/turboacc/main/add_turboacc.sh \
+            --output add_turboacc.sh
+          bash add_turboacc.sh || echo "⚠️ turboacc 脚本执行失败，跳过"
         fi
 
-        for pkg in $PACKAGES; do
-          if [ -n "$pkg" ]; then
-            CFG="CONFIG_PACKAGE_${pkg}"
-            if grep -q "^# ${CFG} is not set" .config; then
-              sed -i "s/^# ${CFG} is not set$/${CFG}=y/" .config
-              echo "✅ Enabled (replaced): ${CFG}=y"
-            elif grep -q "^${CFG}=" .config; then
-              sed -i "s/^${CFG}=.*$/${CFG}=y/" .config
-              echo "✅ Enabled (updated): ${CFG}=y"
-            else
-              echo "${CFG}=y" >> .config
-              echo "✅ Enabled (appended): ${CFG}=y"
-            fi
+        for pkg in "${PACKAGES[@]}"; do
+          CFG="CONFIG_PACKAGE_${pkg}"
+          if grep -q "^# ${CFG} is not set" .config; then
+            sed -i "s/^# ${CFG} is not set$/${CFG}=y/" .config
+            echo "✅ Enabled (replaced): ${CFG}=y"
+          elif grep -q "^${CFG}=" .config; then
+            sed -i "s/^${CFG}=.*$/${CFG}=y/" .config
+            echo "✅ Enabled (updated): ${CFG}=y"
+          else
+            echo "${CFG}=y" >> .config
+            echo "✅ Enabled (appended): ${CFG}=y"
           fi
         done
         
         
     - name: SSH 调试有效时间6h! 连接后输入q 输入exit即可退出，自动继续后续编译流程
-      uses: mxschmitt/action-tmate@master
-      if: ${{ inputs.ssh || contains(github.event.action, 'ssh') }}
+      uses: mxschmitt/action-tmate@c4658e2cd8a2789352e1400f38a57e78587a66f3
+      if: ${{ env.INPUT_SSH == 'true' || contains(github.event.action, 'ssh') }}
       
       
     - name: Config defconfig
@@ -261,6 +317,36 @@ jobs:
        cd openwrt
        make defconfig
        
+    - name: Prepare opkg source fallback
+      timeout-minutes: 15
+      run: |
+        set -Eeuo pipefail
+        cd openwrt
+        OPKG_VERSION=80503d94e356476250adaf1f669ee955ec26de76
+        OPKG_NAME=opkg-2025.11.05~80503d94
+        OPKG_ARCHIVE="dl/${OPKG_NAME}.tar.zst"
+        if [ ! -f "$OPKG_ARCHIVE" ]; then
+          rm -rf "/tmp/$OPKG_NAME" "/tmp/$OPKG_NAME-packed" "/tmp/$OPKG_NAME.tar.git"
+          git clone --filter=blob:none --no-checkout https://git.openwrt.org/project/opkg-lede.git "/tmp/$OPKG_NAME"
+          git -C "/tmp/$OPKG_NAME" checkout --force "$OPKG_VERSION"
+          TAR_TIMESTAMP=$(git -C "/tmp/$OPKG_NAME" log -1 --no-show-signature --format='@%ct')
+          git -C "/tmp/$OPKG_NAME" config core.abbrev 8
+          git -C "/tmp/$OPKG_NAME" archive --format=tar HEAD --output="/tmp/$OPKG_NAME.tar.git"
+          tar --numeric-owner --owner=0 --group=0 --ignore-failed-read \
+            -C "/tmp/$OPKG_NAME" -f "/tmp/$OPKG_NAME.tar.git" -r .git .gitmodules 2>/dev/null || true
+          mkdir -p "/tmp/$OPKG_NAME-packed/$OPKG_NAME"
+          tar -C "/tmp/$OPKG_NAME-packed/$OPKG_NAME" -xf "/tmp/$OPKG_NAME.tar.git"
+          (cd "/tmp/$OPKG_NAME-packed/$OPKG_NAME" && git submodule update --init --recursive -- && rm -rf .git .gitmodules)
+          tar --numeric-owner --owner=0 --group=0 --mode=a-s --sort=name \
+            --mtime="$TAR_TIMESTAMP" -C "/tmp/$OPKG_NAME-packed" -c "$OPKG_NAME" | \
+            zstd -T0 --ultra -20 -c > "$OPKG_ARCHIVE"
+          echo "41fb2c79ce6014e28f7dd0cd8c65efe803986278f2587d1d4681883d8847d87c  $OPKG_ARCHIVE" | sha256sum -c -
+          rm -rf "/tmp/$OPKG_NAME" "/tmp/$OPKG_NAME-packed" "/tmp/$OPKG_NAME.tar.git"
+        fi
+        test -s "$OPKG_ARCHIVE"
+        tar --zstd -tf "$OPKG_ARCHIVE" | grep -q "^${OPKG_NAME}/"
+        echo "Prepared $OPKG_ARCHIVE"
+
     - name: Download package
       id: package
       timeout-minutes: 60
@@ -271,8 +357,15 @@ jobs:
         download_status=${PIPESTATUS[0]}
         if [ "$download_status" -ne 0 ]; then
           echo "::error::软件包下载失败，以下是失败项："
-          grep -Ein '403|404|failed|not found|cannot fetch|error' "$GITHUB_WORKSPACE/download.log" || true
+          grep -Ein '403|404|failed|not found|cannot fetch|error|wrong hash|hash mismatch|no more mirrors' "$GITHUB_WORKSPACE/download.log" || true
           exit "$download_status"
+        fi
+        # Mirror misses can be followed by a successful Git fallback. Only fail
+        # on a terminal hash/package error after all fallbacks are exhausted.
+        if grep -Eiq 'No more mirrors to try - giving up|ERROR: package/.*(failed to build|download)' "$GITHUB_WORKSPACE/download.log"; then
+          echo "::error::下载日志包含最终失败，拒绝进入编译阶段"
+          grep -Ein 'No more mirrors to try - giving up|ERROR: package/.*(failed to build|download)' "$GITHUB_WORKSPACE/download.log" || true
+          exit 1
         fi
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
@@ -281,38 +374,9 @@ jobs:
       if: steps.package.conclusion == 'success'
       run: rm -f "$GITHUB_WORKSPACE/download.log"
 
-    - name: Prepare opkg source fallback
-      timeout-minutes: 15
-      run: |
-        set -Eeuo pipefail
-        cd openwrt
-        OPKG_VERSION=80503d94e356476250adaf1f669ee955ec26de76
-        OPKG_NAME=opkg-2025.11.05~80503d94
-        OPKG_ARCHIVE="dl/${OPKG_NAME}.tar.zst"
-        if [ ! -f "$OPKG_ARCHIVE" ]; then
-          rm -rf /tmp/$OPKG_NAME
-          git clone --filter=blob:none --no-checkout https://git.openwrt.org/project/opkg-lede.git /tmp/$OPKG_NAME
-          git -C /tmp/$OPKG_NAME checkout --force "$OPKG_VERSION"
-          TAR_TIMESTAMP=$(git -C /tmp/$OPKG_NAME log -1 --no-show-signature --format='@%ct')
-          git -C /tmp/$OPKG_NAME config core.abbrev 8
-          git -C /tmp/$OPKG_NAME archive --format=tar HEAD --output=/tmp/$OPKG_NAME.tar.git
-          tar --numeric-owner --owner=0 --group=0 --ignore-failed-read \
-            -C /tmp/$OPKG_NAME -f /tmp/$OPKG_NAME.tar.git -r .git .gitmodules 2>/dev/null || true
-          rm -rf /tmp/$OPKG_NAME-packed /tmp/$OPKG_NAME
-          mkdir -p "/tmp/$OPKG_NAME-packed/$OPKG_NAME"
-          tar -C "/tmp/$OPKG_NAME-packed/$OPKG_NAME" -xf "/tmp/$OPKG_NAME.tar.git"
-          (cd "/tmp/$OPKG_NAME-packed/$OPKG_NAME" && git submodule update --init --recursive -- && rm -rf .git .gitmodules)
-          tar --numeric-owner --owner=0 --group=0 --mode=a-s --sort=name \
-            --mtime="$TAR_TIMESTAMP" -C "/tmp/$OPKG_NAME-packed" -c "$OPKG_NAME" | \
-            zstd -T0 --ultra -20 -c > "$OPKG_ARCHIVE"
-          echo "41fb2c79ce6014e28f7dd0cd8c65efe803986278f2587d1d4681883d8847d87c  $OPKG_ARCHIVE" | sha256sum -c -
-          rm -rf /tmp/$OPKG_NAME /tmp/$OPKG_NAME.tar /tmp/$OPKG_NAME-packed
-        fi
-        echo "Prepared $OPKG_ARCHIVE"
-
     - name: Upload download diagnostics
       if: failure() && steps.package.conclusion == 'failure'
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7.0.1
       with:
         name: download-diagnostics
         path: download.log
@@ -327,7 +391,7 @@ jobs:
 
  
     - name: 自动上传最新源码生成.config编译配置
-      uses: actions/upload-artifact@main
+      uses: actions/upload-artifact@v7.0.1
       with:
        name: build-config
        path: |
@@ -338,11 +402,11 @@ jobs:
 
     - name: Compile the firmware
       id: compile
-      timeout-minutes: 220
+      timeout-minutes: 300
       run: |
         cd openwrt
         echo -e "$(nproc) thread compile"
-        timeout --signal=TERM --kill-after=5m 210m make -j"$(nproc)"
+        timeout --signal=TERM --kill-after=5m 290m make -j"$(nproc)"
         echo "status=success" >> $GITHUB_OUTPUT
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
@@ -362,7 +426,7 @@ jobs:
       run: git config --global http.postBuffer 524288000
 
     - name: Upload bin directory
-      uses: actions/upload-artifact@main
+      uses: actions/upload-artifact@v7.0.1
       if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
       with:
         name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
@@ -374,7 +438,7 @@ jobs:
       run: |
         cd openwrt/bin/targets/*/*
         rm -rf packages
-        PROFILE=${{ github.event.inputs.profile }}
+        PROFILE="$INPUT_PROFILE"
 
         # 创建刷机包目录并打包 zip
         mkdir -p flash_package
@@ -408,7 +472,7 @@ jobs:
         echo "status=success" >> $GITHUB_OUTPUT
 
     - name: Upload firmware directory
-      uses: actions/upload-artifact@main
+      uses: actions/upload-artifact@v7.0.1
       if: steps.organize.outputs.status == 'success' && !cancelled()
       with:
         name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
@@ -418,9 +482,9 @@ jobs:
       id: tag
       if: env.UPLOAD_RELEASE == 'true' && steps.organize.outputs.status == 'success' && !cancelled()
       run: |
-        PROFILE=${{ github.event.inputs.profile }}
+        PROFILE="$INPUT_PROFILE"
         # 提取用户设置的 IP 和主机名
-        RAW='${{ inputs.extra_packages }}'
+        RAW="$INPUT_EXTRA_PACKAGES"
         CUSTOM_IP=$(echo "$RAW" | grep -oP '(?<=__ip__)[^,\s]+' || true)
         CUSTOM_HOSTNAME=$(echo "$RAW" | grep -oP '(?<=__hostname__)[^,\s]+' || true)
         DISPLAY_IP=${CUSTOM_IP:-192.168.1.1}
@@ -467,7 +531,7 @@ jobs:
 
     - name: Upload firmware to release
       if: env.UPLOAD_RELEASE == 'true' && steps.organize.outputs.status == 'success'
-      uses: ncipollo/release-action@main
+      uses: ncipollo/release-action@v1.21.0
       timeout-minutes: 15
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -475,7 +539,7 @@ jobs:
         tag: ${{ steps.tag.outputs.release_tag }}
         bodyFile: release.txt
         artifacts: ${{ env.FIRMWARE }}/**/*
-        artifactErrorsFailBuild: false
+        artifactErrorsFailBuild: true
         allowUpdates: true
         draft: false
         prerelease: false

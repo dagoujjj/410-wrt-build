@@ -157,7 +157,8 @@ jobs:
         CUSTOM_HASH="$INPUT_CUSTOM_HASH"
         LOCK_FILE="upstream_lock.txt"
         if [ -n "$CUSTOM_HASH" ]; then
-          echo "locked_hash=$CUSTOM_HASH" >> $GITHUB_OUTPUT
+          [[ "$CUSTOM_HASH" =~ ^[0-9a-fA-F]{40}$ ]] || { echo "custom_hash 不是有效 commit hash" >&2; exit 1; }
+          echo "locked_hash=${CUSTOM_HASH,,}" >> "$GITHUB_OUTPUT"
           echo "使用用户指定 hash: $CUSTOM_HASH"
         elif [ -f "$LOCK_FILE" ]; then
           locked_hash=$(tr -d '[:space:]' < "$LOCK_FILE")
@@ -297,8 +298,8 @@ jobs:
       uses: actions/cache@v4
       with:
         path: |
-          openwrt/.ccache
           openwrt/dl
+          /build/cache
         key: openwrt-${{ env.INPUT_PROFILE }}-${{ hashFiles('config/wf2.config', '.github/workflows/Build_高通410 imm.yml', 'upstream_lock.txt') }}
         restore-keys: |
           openwrt-${{ env.INPUT_PROFILE }}-
@@ -384,7 +385,25 @@ jobs:
         echo "Optional feed dependency warnings may be present; continuing with wf2 selection."
         cd openwrt
         make defconfig
-       
+        required_packages=(
+          luci-ssl-openssl wpad-basic-openssl travelmate luci-app-travelmate
+          dnsmasq-full luci-app-pbr luci-app-adblock-fast luci-app-banip
+          qrencode luci-app-ttyd
+        )
+        for pkg in "${required_packages[@]}"; do
+          grep -q "^CONFIG_PACKAGE_${pkg}=y$" .config || {
+            echo "::error::wf2 必需软件包未进入最终配置: $pkg"
+            exit 1
+          }
+        done
+        for pkg in kmod-iptables kmod-nf-ipt kmod-nf-ipt6 kmod-nft-compat libustream-mbedtls luci-ssl; do
+          if grep -q "^CONFIG_PACKAGE_${pkg}=y$" .config; then
+            echo "::error::wf2 禁止的软件包变体被启用: $pkg"
+            exit 1
+          fi
+        done
+        grep -q '^CONFIG_PACKAGE_libustream-openssl=y$' .config
+        echo "wf2 package and SSL/netfilter invariants verified."
     - name: Prepare opkg source fallback
       timeout-minutes: 15
       run: |
@@ -453,6 +472,7 @@ jobs:
         # download.pl hashes exactly what it receives.
         chmod +x "$GITHUB_WORKSPACE/scripts/download-source.sh"
         export DOWNLOAD_TOOL_CUSTOM="$GITHUB_WORKSPACE/scripts/download-source.sh"
+        mkdir -p /build/cache
         run_download() {
           timeout --signal=TERM --kill-after=5m 80m make download -j"$(nproc)" V=s 2>&1 | tee -a "$GITHUB_WORKSPACE/download.log"
           return "${PIPESTATUS[0]}"

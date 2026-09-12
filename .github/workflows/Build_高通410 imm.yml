@@ -216,13 +216,20 @@ jobs:
         # generate the archive locally, and update the feed hash to the bytes
         # actually placed in dl/. Integrity checking remains enabled.
         prepare_latest_archive() {
-          local repo="$1" archive="$2" subdir="$3" makefile="$4" compression="$5"
+          local repo="$1" archive="$2" subdir="$3" makefile="$4" compression="$5" source_ref="${6:-HEAD}"
           test -f "$makefile"
-          echo "Probing canonical source: $repo"
+          echo "Probing canonical source: $repo ($source_ref)"
           local commit
-          commit=$(git ls-remote --exit-code "$repo" HEAD | awk '$2 == "HEAD" { print $1; exit }')
-          [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || { echo "No usable HEAD for $repo" >&2; exit 1; }
-          echo "Using probed HEAD $commit"
+          local probe_attempt=0
+          commit=""
+          until [ "$probe_attempt" -ge 5 ] || [ -n "$commit" ]; do
+            probe_attempt=$((probe_attempt + 1))
+            commit=$(git ls-remote --exit-code "$repo" "$source_ref" 2>/dev/null | awk 'NR == 1 { print $1; exit }' || true)
+            [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || commit=""
+            [ -n "$commit" ] || { echo "Source probe attempt $probe_attempt/5 failed; retrying..." >&2; sleep $((probe_attempt * 5)); }
+          done
+          [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || { echo "No usable revision for $repo $source_ref" >&2; exit 1; }
+          echo "Using probed $source_ref commit $commit"
           sed -i -E "s|^PKG_SOURCE_URL:=.*|PKG_SOURCE_URL:=$repo|" "$makefile"
           sed -i -E "s|^PKG_SOURCE_VERSION:=.*|PKG_SOURCE_VERSION:=$commit|" "$makefile"
           archive=${archive//\{commit\}/$commit}
@@ -260,7 +267,10 @@ jobs:
         prepare_latest_archive https://github.com/lkiuyu/qcom-firmware.git qcom-firmware-1034.2.4.tar.xz qcom-firmware-1034.2.4 openwrt/feeds/openstick/firmware/qcom-firmware/Makefile xz
         prepare_latest_archive https://github.com/lkiuyu/android-tools.git 'android-tools-4.2.2-{commit}.tar.gz' android-tools-4.2.2 openwrt/feeds/openstick/utils/android-tools/Makefile gz
         prepare_latest_archive https://github.com/linux-msm/rmtfs.git rmtfs-1.1.1.tar.xz rmtfs-1.1.1 openwrt/feeds/openstick/utils/rmtfs/Makefile xz
-        prepare_latest_archive https://github.com/linux-mobile-broadband/ModemManager.git modemmanager-1.24.0.tar.zst modemmanager-1.24.0 openwrt/feeds/openstick/net/modemmanager/Makefile zst
+        # The feed Makefile is an OpenWrt 1.24.0 package recipe. Keep its
+        # source contract tied to the immutable upstream 1.24.0 tag instead of
+        # silently compiling an unrelated moving master HEAD.
+        prepare_latest_archive https://github.com/linux-mobile-broadband/ModemManager.git modemmanager-1.24.0.tar.zst modemmanager-1.24.0 openwrt/feeds/openstick/net/modemmanager/Makefile zst 'refs/tags/1.24.0^{}'
 
     - name: Load custom configuration
       run: |

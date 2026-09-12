@@ -349,13 +349,17 @@ jobs:
     - name: SSH 调试有效时间6h! 连接后输入q 输入exit即可退出，自动继续后续编译流程
       uses: mxschmitt/action-tmate@c4658e2cd8a2789352e1400f38a57e78587a66f3
       if: ${{ env.INPUT_SSH == 'true' || contains(github.event.action, 'ssh') }}
-      
-      
+
     - name: Config defconfig
       id: config
       run: |
-       cd openwrt
-       make defconfig
+        set -Eeuo pipefail
+        # Most feed warnings below come from optional packages that are not
+        # selected by wf2. Treat them as diagnostics, not fatal dependencies;
+        # make defconfig remains the authoritative dependency resolver.
+        echo "Optional feed dependency warnings may be present; continuing with wf2 selection."
+        cd openwrt
+        make defconfig
        
     - name: Prepare opkg source fallback
       timeout-minutes: 15
@@ -429,12 +433,17 @@ jobs:
         if [ "$download_status" -ne 0 ] || grep -Eiq 'No more mirrors to try - giving up|ERROR: package/.*(failed to build|download)' "$GITHUB_WORKSPACE/download.log"; then
           echo "::warning::首轮下载存在失败，用 make download -j1 串行重试一轮..."
           : > "$GITHUB_WORKSPACE/download-retry.log"
-          timeout --signal=TERM --kill-after=5m 60m make download -j1 V=s 2>&1 | tee -a "$GITHUB_WORKSPACE/download-retry.log" || true
+          retry_status=0
+          timeout --signal=TERM --kill-after=5m 60m make download -j1 2>&1 | tee -a "$GITHUB_WORKSPACE/download-retry.log" || retry_status=${PIPESTATUS[0]}
           cat "$GITHUB_WORKSPACE/download-retry.log" >> "$GITHUB_WORKSPACE/download.log"
-          # After the serial retry pass a terminal error is fatal.
-          if grep -Eiq 'No more mirrors to try - giving up|ERROR: package/.*(failed to build|download)' "$GITHUB_WORKSPACE/download.log"; then
+          # A non-zero retry status is terminal even when a mirror emits an
+          # unexpected error string that is not covered by the grep below.
+          if [ "$retry_status" -ne 0 ] || grep -Eiq 'No more mirrors to try - giving up|ERROR: package/.*(failed to build|download)' "$GITHUB_WORKSPACE/download-retry.log"; then
             echo "::error::软件包下载重试后仍失败，以下是失败项："
-            grep -Ein 'No more mirrors to try - giving up|ERROR: package/.*(failed to build|download)' "$GITHUB_WORKSPACE/download.log" || true
+            grep -Ein 'No more mirrors to try - giving up|ERROR: package/.*(failed to build|download)' "$GITHUB_WORKSPACE/download-retry.log" || true
+            if [ "$retry_status" -ne 0 ]; then
+              exit "$retry_status"
+            fi
             exit 1
           fi
         fi
@@ -475,13 +484,30 @@ jobs:
       id: compile
       timeout-minutes: 300
       run: |
+        set -o pipefail
         cd openwrt
         echo -e "$(nproc) thread compile"
-        timeout --signal=TERM --kill-after=5m 290m make -j"$(nproc)"
+        compile_status=0
+        timeout --signal=TERM --kill-after=5m 290m make -j"$(nproc)" 2>&1 | tee "$GITHUB_WORKSPACE/compile.log" || compile_status=${PIPESTATUS[0]}
+        if [ "$compile_status" -ne 0 ]; then
+          echo "::error::并行编译失败，使用 -j1 V=sc 重跑 package/install 以保留首个真实错误"
+          timeout --signal=TERM --kill-after=5m 40m make -j1 V=sc package/install 2>&1 | tee "$GITHUB_WORKSPACE/compile-retry.log" || true
+          exit "$compile_status"
+        fi
         echo "status=success" >> $GITHUB_OUTPUT
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+
+    - name: Upload compile diagnostics
+      if: failure() && steps.compile.conclusion == 'failure'
+      uses: actions/upload-artifact@v7.0.1
+      with:
+        name: compile-diagnostics
+        path: |
+          compile.log
+          compile-retry.log
+        if-no-files-found: ignore
 
     - name: Get kernel version
       run: |

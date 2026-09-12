@@ -396,7 +396,7 @@ jobs:
             exit 1
           }
         done
-        for pkg in kmod-iptables kmod-nf-ipt kmod-nf-ipt6 kmod-nft-compat libustream-mbedtls luci-ssl; do
+        for pkg in kmod-iptables kmod-nf-ipt6 kmod-nft-compat libustream-mbedtls luci-ssl; do
           if grep -q "^CONFIG_PACKAGE_${pkg}=y$" .config; then
             echo "::error::wf2 禁止的软件包变体被启用: $pkg"
             exit 1

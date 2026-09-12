@@ -160,11 +160,10 @@ jobs:
           echo "locked_hash=$CUSTOM_HASH" >> $GITHUB_OUTPUT
           echo "使用用户指定 hash: $CUSTOM_HASH"
         elif [ -f "$LOCK_FILE" ]; then
-          # Keep upstream_lock.txt as an audit/reproducibility record, but use
-          # the current branch for normal builds. Pass custom_hash explicitly
-          # when an exact upstream revision is required.
-          echo "locked_hash=" >> $GITHUB_OUTPUT
-          echo "忽略默认锁定 hash，使用最新 ${REPO_BRANCH}；需要复现时请填写 custom_hash"
+          locked_hash=$(tr -d '[:space:]' < "$LOCK_FILE")
+          [[ "$locked_hash" =~ ^[0-9a-f]{40}$ ]] || { echo "upstream_lock.txt 不是有效 commit hash" >&2; exit 1; }
+          echo "locked_hash=$locked_hash" >> "$GITHUB_OUTPUT"
+          echo "使用已验证的上游 hash: $locked_hash"
         else
           echo "locked_hash=" >> $GITHUB_OUTPUT
           echo "使用最新 ${REPO_BRANCH}"
@@ -178,8 +177,10 @@ jobs:
         df -hT "$PWD"
         timeout --signal=TERM --kill-after=2m 12m git clone --depth 1 "$REPO_URL" -b "$REPO_BRANCH" openwrt
         if [ -n "${{ steps.lock.outputs.locked_hash }}" ]; then
-          cd openwrt && timeout --signal=TERM --kill-after=2m 3m git fetch --depth 1 origin "${{ steps.lock.outputs.locked_hash }}" && git checkout "${{ steps.lock.outputs.locked_hash }}"
+          timeout --signal=TERM --kill-after=2m 3m git fetch --depth 1 origin "${{ steps.lock.outputs.locked_hash }}"
+          git checkout --detach "${{ steps.lock.outputs.locked_hash }}"
         fi
+        git rev-parse HEAD > /mnt/openwrt/UPSTREAM_COMMIT
         ln -sf /mnt/openwrt $GITHUB_WORKSPACE/openwrt
 
 
@@ -274,10 +275,33 @@ jobs:
 
     - name: Load custom configuration
       run: |
-        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
-        chmod +x $DIY_P2_SH
+        set -Eeuo pipefail
+        [ -e "$CONFIG_FILE" ] && cp "$CONFIG_FILE" openwrt/.config
+        chmod +x "$DIY_P2_SH"
         cd openwrt
-        $GITHUB_WORKSPACE/$DIY_P2_SH
+        "$GITHUB_WORKSPACE/$DIY_P2_SH"
+
+    - name: Patch LuCI OpenSSL collection compatibility
+      run: |
+        set -Eeuo pipefail
+        makefile="openwrt/feeds/luci/collections/luci-ssl-openssl/Makefile"
+        if [ -f "$makefile" ]; then
+          # This LuCI revision refers to a px5g-openssl package that is not
+          # provided by the matching buildroot. The standalone px5g binary is
+          # the supported equivalent and keeps HTTPS key generation working.
+          sed -i 's/+px5g-openssl/+px5g-standalone/' "$makefile"
+          grep -q '+px5g-standalone' "$makefile"
+        fi
+
+    - name: Restore OpenWrt compiler cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          openwrt/.ccache
+          openwrt/dl
+        key: openwrt-${{ env.INPUT_PROFILE }}-${{ hashFiles('config/wf2.config', '.github/workflows/Build_高通410 imm.yml', 'upstream_lock.txt') }}
+        restore-keys: |
+          openwrt-${{ env.INPUT_PROFILE }}-
 
     - name: Install extra packages
       if: ${{ env.INPUT_EXTRA_PACKAGES != '' }}
@@ -402,11 +426,15 @@ jobs:
         cd openwrt
         mkdir -p dl
         ARIA2C="aria2c --console-log-level=warn --summary-interval=0 -x8 -s8 -k1M --max-tries=8 --retry-wait=3 --timeout=60 --connect-timeout=20 --allow-overwrite=true --auto-file-renaming=false --continue=true --dir=dl"
-        # Linux kernel tarball (~140MB) pinned to the locked upstream commit.
-        KERNEL_VERSION="6.12.85"
-        KERNEL_HASH="e35ac999f40a6874493d8d60f33f1150d7a89ae5841c428da82257fbcd070aed"
-        $ARIA2C "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${KERNEL_VERSION}.tar.xz"
-        echo "${KERNEL_HASH}  dl/linux-${KERNEL_VERSION}.tar.xz" | sha256sum -c -
+        # A pinned archive is only useful when it matches the cloned source tree.
+        # Resolve the target's kernel version and hash from the checked-out tree.
+        KERNEL_PATCHVER=$(sed -n 's/^KERNEL_PATCHVER:=//p' target/linux/msm89xx/Makefile)
+        KERNEL_DETAILS="target/linux/generic/kernel-${KERNEL_PATCHVER}"
+        KERNEL_VERSION=$(sed -n "s/^LINUX_VERSION-${KERNEL_PATCHVER}[[:space:]]*=[[:space:]]*//p" "$KERNEL_DETAILS")
+        KERNEL_HASH=$(sed -n "s/^LINUX_KERNEL_HASH-${KERNEL_PATCHVER}${KERNEL_VERSION}[[:space:]]*=[[:space:]]*//p" "$KERNEL_DETAILS")
+        test -n "$KERNEL_VERSION" -a -n "$KERNEL_HASH"
+        $ARIA2C "https://cdn.kernel.org/pub/linux/kernel/v${KERNEL_PATCHVER}.x/linux-${KERNEL_PATCHVER}${KERNEL_VERSION}.tar.xz"
+        echo "${KERNEL_HASH}  dl/linux-${KERNEL_PATCHVER}${KERNEL_VERSION}.tar.xz" | sha256sum -c -
         echo "Kernel tarball prefetched with aria2c (multithreaded)."
 
     - name: Download package
@@ -484,17 +512,19 @@ jobs:
       id: compile
       timeout-minutes: 300
       run: |
-        set -o pipefail
+        set -Eeuo pipefail
         cd openwrt
-        echo -e "$(nproc) thread compile"
+        echo "$(nproc) threads available"
         compile_status=0
-        timeout --signal=TERM --kill-after=5m 290m make -j"$(nproc)" 2>&1 | tee "$GITHUB_WORKSPACE/compile.log" || compile_status=${PIPESTATUS[0]}
+        timeout --signal=TERM --kill-after=5m 290m make -j"$(nproc)" V=s 2>&1 | tee "$GITHUB_WORKSPACE/compile.log" || compile_status=${PIPESTATUS[0]}
         if [ "$compile_status" -ne 0 ]; then
-          echo "::error::并行编译失败，使用 -j1 V=sc 重跑 package/install 以保留首个真实错误"
-          timeout --signal=TERM --kill-after=5m 40m make -j1 V=sc package/install 2>&1 | tee "$GITHUB_WORKSPACE/compile-retry.log" || true
+          echo "::error::并行编译失败，重跑失败的 package/install 以保留首个真实错误"
+          retry_status=0
+          timeout --signal=TERM --kill-after=5m 40m make -j1 V=sc package/install 2>&1 | tee "$GITHUB_WORKSPACE/compile-retry.log" || retry_status=${PIPESTATUS[0]}
+          echo "retry_status=$retry_status" >> "$GITHUB_OUTPUT"
           exit "$compile_status"
         fi
-        echo "status=success" >> $GITHUB_OUTPUT
+        echo "status=success" >> "$GITHUB_OUTPUT"
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV

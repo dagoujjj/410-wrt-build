@@ -299,7 +299,7 @@ jobs:
       with:
         path: |
           openwrt/dl
-          /build/cache
+          openwrt/.ccache
         key: openwrt-${{ env.INPUT_PROFILE }}-${{ hashFiles('config/wf2.config', '.github/workflows/Build_高通410 imm.yml', 'upstream_lock.txt') }}
         restore-keys: |
           openwrt-${{ env.INPUT_PROFILE }}-
@@ -472,7 +472,6 @@ jobs:
         # download.pl hashes exactly what it receives.
         chmod +x "$GITHUB_WORKSPACE/scripts/download-source.sh"
         export DOWNLOAD_TOOL_CUSTOM="$GITHUB_WORKSPACE/scripts/download-source.sh"
-        mkdir -p /build/cache
         run_download() {
           timeout --signal=TERM --kill-after=5m 80m make download -j"$(nproc)" V=s 2>&1 | tee -a "$GITHUB_WORKSPACE/download.log"
           return "${PIPESTATUS[0]}"

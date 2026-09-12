@@ -433,7 +433,8 @@ jobs:
         KERNEL_VERSION=$(sed -n "s/^LINUX_VERSION-${KERNEL_PATCHVER}[[:space:]]*=[[:space:]]*//p" "$KERNEL_DETAILS")
         KERNEL_HASH=$(sed -n "s/^LINUX_KERNEL_HASH-${KERNEL_PATCHVER}${KERNEL_VERSION}[[:space:]]*=[[:space:]]*//p" "$KERNEL_DETAILS")
         test -n "$KERNEL_VERSION" -a -n "$KERNEL_HASH"
-        $ARIA2C "https://cdn.kernel.org/pub/linux/kernel/v${KERNEL_PATCHVER}.x/linux-${KERNEL_PATCHVER}${KERNEL_VERSION}.tar.xz"
+        KERNEL_SERIES="${KERNEL_PATCHVER%%.*}"
+        $ARIA2C "https://cdn.kernel.org/pub/linux/kernel/v${KERNEL_SERIES}.x/linux-${KERNEL_PATCHVER}${KERNEL_VERSION}.tar.xz"
         echo "${KERNEL_HASH}  dl/linux-${KERNEL_PATCHVER}${KERNEL_VERSION}.tar.xz" | sha256sum -c -
         echo "Kernel tarball prefetched with aria2c (multithreaded)."
 

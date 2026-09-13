@@ -293,12 +293,12 @@ jobs:
     - name: Restore compiler cache
       uses: actions/cache@v4
       with:
-        path: |
-          openwrt/dl
-          openwrt/.ccache
-        key: openwrt-${{ env.INPUT_PROFILE }}-${{ hashFiles('config/wf2.config', '.github/workflows/build_firmware.yml', 'upstream_lock.txt') }}
+        path: openwrt/.ccache
+        # Keep generated Go module archives out of the compiler cache. A partial
+        # module cache can make a later Mihomo build fail with missing packages.
+        key: openwrt-ccache-v2-${{ env.INPUT_PROFILE }}-${{ hashFiles('config/wf2.config', '.github/workflows/build_firmware.yml', 'upstream_lock.txt') }}
         restore-keys: |
-          openwrt-${{ env.INPUT_PROFILE }}-
+          openwrt-ccache-v2-${{ env.INPUT_PROFILE }}-
 
     - name: Select extra packages
       if: ${{ env.INPUT_EXTRA_PACKAGES != '' }}

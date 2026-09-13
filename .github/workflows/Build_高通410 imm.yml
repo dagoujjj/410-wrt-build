@@ -76,8 +76,8 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    # Leave room for feeds, downloads, toolchain and full firmware compilation.
-    timeout-minutes: 360
+    # Weak runners need a full four-hour compile window plus setup/upload time.
+    timeout-minutes: 480
     permissions:
       contents: write
       actions: write
@@ -530,13 +530,13 @@ jobs:
 
     - name: Compile the firmware
       id: compile
-      timeout-minutes: 300
+      timeout-minutes: 250
       run: |
         set -Eeuo pipefail
         cd openwrt
         echo "$(nproc) threads available"
         compile_status=0
-        timeout --signal=TERM --kill-after=5m 290m make -j"$(nproc)" V=s 2>&1 | tee "$GITHUB_WORKSPACE/compile.log" || compile_status=${PIPESTATUS[0]}
+        timeout --signal=TERM --kill-after=10m 240m make -j"$(nproc)" V=s 2>&1 | tee "$GITHUB_WORKSPACE/compile.log" || compile_status=${PIPESTATUS[0]}
         if [ "$compile_status" -ne 0 ]; then
           echo "::error::并行编译失败，重跑失败的 package/install 以保留首个真实错误"
           retry_status=0

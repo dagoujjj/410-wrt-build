@@ -1,19 +1,18 @@
 #
 #
 
-name: 🚀 Build_imm_高通410系列
+name: Build ImmortalWrt Snapdragon 410 Firmware
 
 on:
-  repository_dispatch:
   workflow_dispatch:
     inputs:
       ssh:
-        description: ' ← 选择是否开启 SSH 调试专业人员使用'
+        description: 'Select whether to enable SSH debug session'
         required: false
         default: false
         type: boolean
       profile:
-        description: ' ↓ 支持多款型号 手动选择要编译的机型 ↓ '
+        description: 'Select the target device profile'
         type: choice
         options:
           - ufi003
@@ -32,35 +31,33 @@ on:
         default: ufi003
         required: true
       upstream:
-        description: ' ↓ 选择上游源码仓库 ↓ '
+        description: 'Select the upstream source repository'
         type: choice
         options:
           - lkiuyu/immortalwrt
         default: lkiuyu/immortalwrt
         required: true
       custom_hash:
-        description: ' ↓ 可选：指定上游 commit hash；留空使用最新 master ↓ '
+        description: 'Optional upstream commit SHA; empty uses the locked commit'
         required: false
         default: ''
         type: string
       extra_packages:
-        description: ' ↓ 输入额外包名（逗号或空格分隔，留空则不添加任何额外包）↓ '
+        description: 'Additional package names separated by commas or spaces'
         required: false
         default: ''
         type: string
 
 env:
-  # Keep the existing workflow_dispatch inputs compatible. The payload fallback
-  # also makes the declared repository_dispatch trigger usable.
-  INPUT_SSH: ${{ github.event.inputs.ssh || github.event.client_payload.ssh || 'false' }}
-  INPUT_PROFILE: ${{ github.event.inputs.profile || github.event.client_payload.profile || 'ufi003' }}
-  INPUT_UPSTREAM: ${{ github.event.inputs.upstream || github.event.client_payload.upstream || 'lkiuyu/immortalwrt' }}
-  INPUT_CUSTOM_HASH: ${{ github.event.inputs.custom_hash || github.event.client_payload.custom_hash || '' }}
-  INPUT_EXTRA_PACKAGES: ${{ github.event.inputs.extra_packages || github.event.client_payload.extra_packages || '' }}
-  REPO_URL: https://github.com/${{ github.event.inputs.upstream || github.event.client_payload.upstream || 'lkiuyu/immortalwrt' }}
+  INPUT_SSH: ${{ github.event.inputs.ssh || 'false' }}
+  INPUT_PROFILE: ${{ github.event.inputs.profile || 'ufi003' }}
+  INPUT_UPSTREAM: ${{ github.event.inputs.upstream || 'lkiuyu/immortalwrt' }}
+  INPUT_CUSTOM_HASH: ${{ github.event.inputs.custom_hash || '' }}
+  INPUT_EXTRA_PACKAGES: ${{ github.event.inputs.extra_packages || '' }}
+  REPO_URL: https://github.com/${{ github.event.inputs.upstream || 'lkiuyu/immortalwrt' }}
   REPO_BRANCH: master
   FEEDS_CONF: feeds.conf.default
-  CONFIG_FILE: ${{ format('config/{0}.config', github.event.inputs.profile || github.event.client_payload.profile || 'ufi003') }}
+  CONFIG_FILE: ${{ format('config/{0}.config', github.event.inputs.profile || 'ufi003') }}
   DIY_P1_SH: diy-part1.sh
   DIY_P2_SH: diy-part2.sh
   UPLOAD_BIN_DIR: false
@@ -70,7 +67,7 @@ env:
   TZ: Asia/Shanghai
 
 concurrency:
-  group: firmware-${{ github.workflow }}-${{ github.event.inputs.profile || github.event.client_payload.profile || 'ufi003' }}
+  group: firmware-${{ github.workflow }}-${{ github.event.inputs.profile || 'ufi003' }}
   cancel-in-progress: false
 
 jobs:
@@ -80,9 +77,8 @@ jobs:
     timeout-minutes: 480
     permissions:
       contents: write
-      actions: write
     steps:
-    - name: 🚀 编译 (Build)
+    - name: Checkout repository
       uses: actions/checkout@v7.0.1
 
     - name: Show hardware info
@@ -101,7 +97,7 @@ jobs:
         docker-images: true
         swap-storage: true
         
-    - name: Initialization environment
+    - name: Configure build environment
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
@@ -110,21 +106,21 @@ jobs:
         sudo -E apt-get -y install $(curl -fsSL https://raw.githubusercontent.com/xuxin1955/depend_ubuntu2204_openwrt/refs/heads/main/depend_ubuntu2204_openwrt)
         aria2c --version | head -1
 
-    - name: mkbootimg build
+    - name: Install mkbootimg
       run: |
         curl --fail --location --retry 5 --retry-delay 5 --connect-timeout 30 \
           --output mkbootimg_34.0.5-12build1_all.deb \
           https://github.com/xuxin1955/depend_ubuntu2204_openwrt/releases/download/ubuntu_26.04_LTS_mkbootimg/mkbootimg_34.0.5-12build1_all.deb
         sudo dpkg -i mkbootimg_34.0.5-12build1_all.deb
         sudo apt-get install -f -y
-        # 验证安装
+        # Verify the installation.
         mkbootimg --help || true
         MKBOOTIMG_PATH=$(which mkbootimg)
         if [ -n "$MKBOOTIMG_PATH" ]; then
         echo "mkbootimg found at: $MKBOOTIMG_PATH"
         file "$MKBOOTIMG_PATH"
         else
-        echo "❌ mkbootimg not found in PATH!"
+        echo "mkbootimg not found in PATH!"
         fi
 
         sudo timedatectl set-timezone "$TZ"
@@ -142,7 +138,7 @@ jobs:
        python3 -m pip --version
        python3 -c "import setuptools.build_meta; print('setuptools.build_meta OK')"
 
-    - name: Reclaim disk space before build
+    - name: Clean host caches
       run: |
         sudo rm -rf /var/lib/apt/lists/* /var/cache/apt/*
         rm -rf "$HOME/.cache/pip" "$HOME/.cache"/go-build
@@ -151,23 +147,23 @@ jobs:
 
 
 
-    - name: 读取锁定的上游 hash (Read locked upstream hash)
+    - name: Read locked upstream commit
       id: lock
       run: |
         CUSTOM_HASH="$INPUT_CUSTOM_HASH"
         LOCK_FILE="upstream_lock.txt"
         if [ -n "$CUSTOM_HASH" ]; then
-          [[ "$CUSTOM_HASH" =~ ^[0-9a-fA-F]{40}$ ]] || { echo "custom_hash 不是有效 commit hash" >&2; exit 1; }
+          [[ "$CUSTOM_HASH" =~ ^[0-9a-fA-F]{40}$ ]] || { echo "custom_hash is not a valid commit SHA" >&2; exit 1; }
           echo "locked_hash=${CUSTOM_HASH,,}" >> "$GITHUB_OUTPUT"
-          echo "使用用户指定 hash: $CUSTOM_HASH"
+          echo "Using user-specified commit: $CUSTOM_HASH"
         elif [ -f "$LOCK_FILE" ]; then
           locked_hash=$(tr -d '[:space:]' < "$LOCK_FILE")
-          [[ "$locked_hash" =~ ^[0-9a-f]{40}$ ]] || { echo "upstream_lock.txt 不是有效 commit hash" >&2; exit 1; }
+          [[ "$locked_hash" =~ ^[0-9a-f]{40}$ ]] || { echo "upstream_lock.txt does not contain a valid commit SHA" >&2; exit 1; }
           echo "locked_hash=$locked_hash" >> "$GITHUB_OUTPUT"
-          echo "使用已验证的上游 hash: $locked_hash"
+          echo "Using the verified locked commit: $locked_hash"
         else
           echo "locked_hash=" >> $GITHUB_OUTPUT
-          echo "使用最新 ${REPO_BRANCH}"
+          echo "Using the latest ${REPO_BRANCH} commit"
         fi
 
     - name: Clone source code
@@ -185,7 +181,7 @@ jobs:
         ln -sf /mnt/openwrt $GITHUB_WORKSPACE/openwrt
 
 
-    - name:  files
+    - name: Copy custom files
       run: cp -r files openwrt/files
 
     - name: Load custom feeds
@@ -202,13 +198,13 @@ jobs:
 
     - name: Remove conflicting packages from smpackage
       run: |
-        # 删除 small-package 中与系统冲突的包，避免编译报错（官方推荐操作）
-        rm -rf openwrt/feeds/smpackage/{base-files,dnsmasq,firewall*,fullconenat,libnftnl,nftables,ppp,opkg,ucl,upx,vsftpd*,miniupnpd-iptables,wireless-regdb}
+        # Remove third-party packages that conflict with the core build.
+        rm -rf openwrt/feeds/smpackage/{base-files,dnsmasq,firewall*,fullconenat,libnftnl,nftables,ppp,ucl,upx,vsftpd*,miniupnpd-iptables,wireless-regdb}
 
     - name: Install feeds
       run: cd openwrt && ./scripts/feeds install -a -f
 
-    - name: Prepare latest trusted Git source archives
+    - name: Prepare trusted source archives
       timeout-minutes: 60
       run: |
         set -Eeuo pipefail
@@ -282,7 +278,7 @@ jobs:
         cd openwrt
         "$GITHUB_WORKSPACE/$DIY_P2_SH"
 
-    - name: Patch LuCI OpenSSL collection compatibility
+    - name: Apply LuCI OpenSSL compatibility patch
       run: |
         set -Eeuo pipefail
         makefile="openwrt/feeds/luci/collections/luci-ssl-openssl/Makefile"
@@ -294,17 +290,17 @@ jobs:
           grep -q '+px5g-standalone' "$makefile"
         fi
 
-    - name: Restore OpenWrt compiler cache
+    - name: Restore compiler cache
       uses: actions/cache@v4
       with:
         path: |
           openwrt/dl
           openwrt/.ccache
-        key: openwrt-${{ env.INPUT_PROFILE }}-${{ hashFiles('config/wf2.config', '.github/workflows/Build_高通410 imm.yml', 'upstream_lock.txt') }}
+        key: openwrt-${{ env.INPUT_PROFILE }}-${{ hashFiles('config/wf2.config', '.github/workflows/build_firmware.yml', 'upstream_lock.txt') }}
         restore-keys: |
           openwrt-${{ env.INPUT_PROFILE }}-
 
-    - name: Install extra packages
+    - name: Select extra packages
       if: ${{ env.INPUT_EXTRA_PACKAGES != '' }}
       run: |
         set -Eeuo pipefail
@@ -338,51 +334,47 @@ jobs:
         done < <(printf '%s\n' "$INPUT_EXTRA_PACKAGES" | tr ', ' '\n')
 
         if [ -n "$CUSTOM_IP" ]; then
-          echo "🌐 设置管理 IP: $CUSTOM_IP"
+          echo "Setting management IP: $CUSTOM_IP"
           sed -i "s/192\.168\.1\.1/$CUSTOM_IP/g" package/base-files/files/bin/config_generate
         fi
 
         if [ -n "$CUSTOM_HOSTNAME" ]; then
-          echo "🏷️ 设置主机名: $CUSTOM_HOSTNAME"
+          echo "Setting hostname: $CUSTOM_HOSTNAME"
           sed -i "s/set system\.@system\[0\]\.hostname='ImmortalWrt'/set system.@system[0].hostname='$CUSTOM_HOSTNAME'/" package/base-files/files/bin/config_generate || true
           sed -i "s/option hostname 'ImmortalWrt'/option hostname '$CUSTOM_HOSTNAME'/" package/base-files/files/etc/config/system 2>/dev/null || true
         fi
 
         if printf '%s\n' "${PACKAGES[@]}" | grep -qx "luci-app-turboacc"; then
-          echo "⚡ 检测到 luci-app-turboacc，执行 turboacc 安装脚本..."
+          echo "Detected luci-app-turboacc; running the turboacc setup script..."
           curl --fail --location --retry 3 --connect-timeout 20 \
             https://raw.githubusercontent.com/mufeng05/turboacc/main/add_turboacc.sh \
             --output add_turboacc.sh
-          bash add_turboacc.sh || echo "⚠️ turboacc 脚本执行失败，跳过"
+          bash add_turboacc.sh || echo "turboacc script failed; skipping"
         fi
 
         for pkg in "${PACKAGES[@]}"; do
           CFG="CONFIG_PACKAGE_${pkg}"
           if grep -q "^# ${CFG} is not set" .config; then
             sed -i "s/^# ${CFG} is not set$/${CFG}=y/" .config
-            echo "✅ Enabled (replaced): ${CFG}=y"
+            echo "Enabled (replaced): ${CFG}=y"
           elif grep -q "^${CFG}=" .config; then
             sed -i "s/^${CFG}=.*$/${CFG}=y/" .config
-            echo "✅ Enabled (updated): ${CFG}=y"
+            echo "Enabled (updated): ${CFG}=y"
           else
             echo "${CFG}=y" >> .config
-            echo "✅ Enabled (appended): ${CFG}=y"
+            echo "Enabled (appended): ${CFG}=y"
           fi
         done
         
         
-    - name: SSH 调试有效时间6h! 连接后输入q 输入exit即可退出，自动继续后续编译流程
+    - name: Open SSH debug session
       uses: mxschmitt/action-tmate@c4658e2cd8a2789352e1400f38a57e78587a66f3
       if: ${{ env.INPUT_SSH == 'true' || contains(github.event.action, 'ssh') }}
 
-    - name: Config defconfig
+    - name: Normalize final configuration
       id: config
       run: |
         set -Eeuo pipefail
-        # Most feed warnings below come from optional packages that are not
-        # selected by wf2. Treat them as diagnostics, not fatal dependencies;
-        # make defconfig remains the authoritative dependency resolver.
-        echo "Optional feed dependency warnings may be present; continuing with wf2 selection."
         cd openwrt
         make defconfig
         required_packages=(
@@ -390,55 +382,33 @@ jobs:
           dnsmasq-full luci-app-pbr luci-app-adblock-fast luci-app-banip
           qrencode luci-app-ttyd
         )
+        if [ "$INPUT_PROFILE" = "wf2" ]; then
+          required_packages+=(
+            kmod-tun kmod-ifb kmod-sched-cake kmod-tcp-bbr kmod-wireguard
+            wireguard-tools luci-proto-wireguard tc-full ethtool tcpdump luci-app-sqm
+          )
+        fi
         for pkg in "${required_packages[@]}"; do
           grep -q "^CONFIG_PACKAGE_${pkg}=y$" .config || {
-            echo "::error::wf2 必需软件包未进入最终配置: $pkg"
+            echo "::error::Required wf2 package is missing from the final configuration: $pkg"
             exit 1
           }
         done
-        for pkg in kmod-iptables libustream-mbedtls luci-ssl; do
+        for pkg in kmod-iptables libustream-mbedtls luci-ssl apk-mbedtls; do
           if grep -q "^CONFIG_PACKAGE_${pkg}=y$" .config; then
-            echo "::error::wf2 禁止的软件包变体被启用: $pkg"
+            echo "::error::Forbidden package variant is enabled: $pkg"
             exit 1
           fi
         done
-        grep -q '^CONFIG_PACKAGE_libustream-openssl=y$' .config
-        echo "wf2 package and SSL/netfilter invariants verified."
-    - name: Prepare opkg source fallback
-      timeout-minutes: 15
-      run: |
-        set -Eeuo pipefail
-        cd openwrt
-        OPKG_VERSION=80503d94e356476250adaf1f669ee955ec26de76
-        OPKG_NAME=opkg-2025.11.05~80503d94
-        OPKG_ARCHIVE="dl/${OPKG_NAME}.tar.zst"
-        if [ ! -f "$OPKG_ARCHIVE" ]; then
-          rm -rf "/tmp/$OPKG_NAME" "/tmp/$OPKG_NAME-packed" "/tmp/$OPKG_NAME.tar.git"
-          git clone --filter=blob:none --no-checkout https://git.openwrt.org/project/opkg-lede.git "/tmp/$OPKG_NAME"
-          git -C "/tmp/$OPKG_NAME" checkout --force "$OPKG_VERSION"
-          TAR_TIMESTAMP=$(git -C "/tmp/$OPKG_NAME" log -1 --no-show-signature --format='@%ct')
-          git -C "/tmp/$OPKG_NAME" config core.abbrev 8
-          git -C "/tmp/$OPKG_NAME" archive --format=tar HEAD --output="/tmp/$OPKG_NAME.tar.git"
-          tar --numeric-owner --owner=0 --group=0 --ignore-failed-read \
-            -C "/tmp/$OPKG_NAME" -f "/tmp/$OPKG_NAME.tar.git" -r .git .gitmodules 2>/dev/null || true
-          mkdir -p "/tmp/$OPKG_NAME-packed/$OPKG_NAME"
-          tar -C "/tmp/$OPKG_NAME-packed/$OPKG_NAME" -xf "/tmp/$OPKG_NAME.tar.git"
-          (cd "/tmp/$OPKG_NAME-packed/$OPKG_NAME" && git submodule update --init --recursive -- && rm -rf .git .gitmodules)
-          tar --numeric-owner --owner=0 --group=0 --mode=a-s --sort=name \
-            --mtime="$TAR_TIMESTAMP" -C "/tmp/$OPKG_NAME-packed" -c "$OPKG_NAME" | \
-            zstd -T0 --ultra -20 -c > "$OPKG_ARCHIVE"
-          echo "41fb2c79ce6014e28f7dd0cd8c65efe803986278f2587d1d4681883d8847d87c  $OPKG_ARCHIVE" | sha256sum -c -
-          rm -rf "/tmp/$OPKG_NAME" "/tmp/$OPKG_NAME-packed" "/tmp/$OPKG_NAME.tar.git"
+        if [ "$INPUT_PROFILE" = "wf2" ]; then
+          grep -q '^CONFIG_USE_APK=y$' .config
+          grep -q '^CONFIG_PACKAGE_apk-openssl=y$' .config
+          grep -q '^# CONFIG_PACKAGE_opkg is not set$' .config
+          grep -q '^CONFIG_LINUX_6_18=y$' .config
         fi
-        test -s "$OPKG_ARCHIVE"
-        # Capture the listing before checking it: a direct tar | grep -q pipe
-        # gives tar SIGPIPE when grep exits first (exit 2 under set -e,
-        # observed in run 34601383285).
-        OPKG_FIRST_ENTRY=$(tar --zstd -tf "$OPKG_ARCHIVE" | sed -n '1p')
-        [[ "$OPKG_FIRST_ENTRY" == "${OPKG_NAME}/"* ]] || { echo "opkg 归档顶层目录异常: $OPKG_FIRST_ENTRY" >&2; exit 1; }
-        echo "Prepared $OPKG_ARCHIVE"
-
-    - name: Prefetch large tarballs with aria2c
+        grep -q '^CONFIG_PACKAGE_libustream-openssl=y$' .config
+        echo "wf2 package, APK, kernel, and SSL/netfilter invariants verified."
+    - name: Prefetch kernel source
       timeout-minutes: 30
       run: |
         set -Eeuo pipefail
@@ -457,7 +427,7 @@ jobs:
         echo "${KERNEL_HASH}  dl/linux-${KERNEL_PATCHVER}${KERNEL_VERSION}.tar.xz" | sha256sum -c -
         echo "Kernel tarball prefetched with aria2c (multithreaded)."
 
-    - name: Download package
+    - name: Download sources
       id: package
       timeout-minutes: 90
       run: |
@@ -479,7 +449,7 @@ jobs:
         download_status=0
         run_download || download_status=$?
         if [ "$download_status" -ne 0 ] || grep -Eiq 'No more mirrors to try - giving up|ERROR: package/.*(failed to build|download)' "$GITHUB_WORKSPACE/download.log"; then
-          echo "::warning::首轮下载存在失败，用 make download -j1 串行重试一轮..."
+          echo "::warning::The parallel download failed; retrying serially with make download -j1."
           : > "$GITHUB_WORKSPACE/download-retry.log"
           retry_status=0
           timeout --signal=TERM --kill-after=5m 60m make download -j1 2>&1 | tee -a "$GITHUB_WORKSPACE/download-retry.log" || retry_status=${PIPESTATUS[0]}
@@ -487,7 +457,7 @@ jobs:
           # A non-zero retry status is terminal even when a mirror emits an
           # unexpected error string that is not covered by the grep below.
           if [ "$retry_status" -ne 0 ] || grep -Eiq 'No more mirrors to try - giving up|ERROR: package/.*(failed to build|download)' "$GITHUB_WORKSPACE/download-retry.log"; then
-            echo "::error::软件包下载重试后仍失败，以下是失败项："
+            echo "::error::Source download failed after retry."
             grep -Ein 'No more mirrors to try - giving up|ERROR: package/.*(failed to build|download)' "$GITHUB_WORKSPACE/download-retry.log" || true
             if [ "$retry_status" -ne 0 ]; then
               exit "$retry_status"
@@ -498,7 +468,7 @@ jobs:
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
 
-    - name: Remove download diagnostics after success
+    - name: Remove download log after success
       if: steps.package.conclusion == 'success'
       run: rm -f "$GITHUB_WORKSPACE/download.log"
 
@@ -510,7 +480,7 @@ jobs:
         path: download.log
         if-no-files-found: ignore
 
-    - name: 查看 openwrt 目录
+    - name: List build directory
       run: ls -la openwrt/
       
            ls -l .config
@@ -518,7 +488,7 @@ jobs:
            ls -la openwrt/.config
 
  
-    - name: 自动上传最新源码生成.config编译配置
+    - name: Upload final build configuration
       uses: actions/upload-artifact@v7.0.1
       with:
        name: build-config
@@ -528,7 +498,7 @@ jobs:
        include-hidden-files: true
 
 
-    - name: Compile the firmware
+    - name: Compile firmware
       id: compile
       timeout-minutes: 250
       run: |
@@ -538,7 +508,7 @@ jobs:
         compile_status=0
         timeout --signal=TERM --kill-after=10m 240m make -j"$(nproc)" V=s 2>&1 | tee "$GITHUB_WORKSPACE/compile.log" || compile_status=${PIPESTATUS[0]}
         if [ "$compile_status" -ne 0 ]; then
-          echo "::error::并行编译失败，重跑失败的 package/install 以保留首个真实错误"
+          echo "::error::Parallel compilation failed; rerunning package/install to capture the first error."
           retry_status=0
           timeout --signal=TERM --kill-after=5m 40m make -j1 V=sc package/install 2>&1 | tee "$GITHUB_WORKSPACE/compile-retry.log" || retry_status=${PIPESTATUS[0]}
           echo "retry_status=$retry_status" >> "$GITHUB_OUTPUT"
@@ -559,17 +529,17 @@ jobs:
           compile-retry.log
         if-no-files-found: ignore
 
-    - name: Get kernel version
+    - name: Read kernel version
       run: |
-        KERNEL_VER=$(cat /mnt/openwrt/build_dir/target-*/linux-*/linux-*/.kernelversion 2>/dev/null | head -1 || echo "未知")
+        KERNEL_VER=$(cat /mnt/openwrt/build_dir/target-*/linux-*/linux-*/.kernelversion 2>/dev/null | head -1 || echo "unknown")
         echo "KERNEL_VER=$KERNEL_VER" >> $GITHUB_ENV
 
 
-    - name: Check space usage
+    - name: Verify build storage
       if: (!cancelled())
       run: df -hT
 
-    - name: Fix Git buffer
+    - name: Configure Git transport buffer
       run: git config --global http.postBuffer 524288000
 
     - name: Upload bin directory
@@ -579,7 +549,7 @@ jobs:
         name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
         path: openwrt/bin
 
-    - name: Organize files
+    - name: Package firmware files
       id: organize
       if: env.UPLOAD_FIRMWARE == 'true' && steps.compile.outputs.status == 'success' && !cancelled()
       run: |
@@ -587,28 +557,28 @@ jobs:
         rm -rf packages
         PROFILE="$INPUT_PROFILE"
 
-        # 创建刷机包目录并打包 zip
+        # Create the flash package and archive it.
         mkdir -p flash_package
         BOOT_IMG=$(ls *boot.img.gz *boot.img 2>/dev/null | head -1)
         SYSTEM_IMG=$(ls *system.img.gz *system.img 2>/dev/null | head -1)
         if [ -z "$BOOT_IMG" ] || [ -z "$SYSTEM_IMG" ]; then
-          echo "::error::固件文件未找到，编译可能失败！当前目录文件："
+          echo "::error::Firmware images were not found. Directory contents:"
           ls -la
           exit 1
         fi
         cp "$BOOT_IMG" flash_package/boot.img.gz
         cp "$SYSTEM_IMG" flash_package/system.img.gz
-        # 解压供刷机脚本使用
+        # Extract images for the flashing tool.
         gzip -dk flash_package/boot.img.gz
         gzip -dk flash_package/system.img.gz
         rm flash_package/boot.img.gz flash_package/system.img.gz
-        cp -r $GITHUB_WORKSPACE/刷机脚本/. flash_package/
-        # 确保 bat 文件是 CRLF 换行（Windows 兼容）
+        cp -r $GITHUB_WORKSPACE/flash_assets/. flash_package/
+        # Ensure batch files use CRLF line endings.
         unix2dos flash_package/*.bat 2>/dev/null || sed -i 's/\r//' flash_package/*.bat && sed -i 's/$/\r/' flash_package/*.bat
-        ZIP_NAME="OpenWrt_${PROFILE}${{ env.FILE_DATE }}_刷机包.zip"
+        ZIP_NAME="OpenWrt_${PROFILE}${{ env.FILE_DATE }}_flash_package.zip"
         cd flash_package && zip -r "../$ZIP_NAME" . && cd ..
 
-        # 整理 release 目录：zip + 单独固件 + 编译信息
+        # Assemble the release directory with the archive and build metadata.
         mkdir -p release_files
         mv "$ZIP_NAME" release_files/
         cp *.manifest release_files/ 2>/dev/null || true
@@ -618,55 +588,55 @@ jobs:
         echo "FIRMWARE=$PWD/release_files" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
 
-    - name: Upload firmware directory
+    - name: Upload firmware artifact
       uses: actions/upload-artifact@v7.0.1
       if: steps.organize.outputs.status == 'success' && !cancelled()
       with:
         name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
         path: ${{ env.FIRMWARE }}
 
-    - name: Generate release tag
+    - name: Generate release metadata
       id: tag
       if: env.UPLOAD_RELEASE == 'true' && steps.organize.outputs.status == 'success' && !cancelled()
       run: |
         PROFILE="$INPUT_PROFILE"
-        # 提取用户设置的 IP 和主机名
+        # Extract optional management settings.
         RAW="$INPUT_EXTRA_PACKAGES"
         CUSTOM_IP=$(echo "$RAW" | grep -oP '(?<=__ip__)[^,\s]+' || true)
         CUSTOM_HOSTNAME=$(echo "$RAW" | grep -oP '(?<=__hostname__)[^,\s]+' || true)
         DISPLAY_IP=${CUSTOM_IP:-192.168.1.1}
         DISPLAY_HOSTNAME=${CUSTOM_HOSTNAME:-ImmortalWrt}
-        # 过滤掉特殊前缀，只显示真正的包名
+        # Remove special tokens from the package list.
         EXTRA=$(echo "$RAW" | sed 's/,/ /g' | tr ' ' '\n' | grep -v '^__ip__' | grep -v '^__hostname__' | sed '/^$/d')
 
         echo "release_tag=$(date +"%Y.%m.%d-%H%M")-${PROFILE}" >> $GITHUB_OUTPUT
         touch release.txt
         {
-          echo "## Immortalwrt master分支 高通410系列 · ${PROFILE}"
+          echo "## ImmortalWrt Snapdragon 410 - ${PROFILE}"
           echo ""
-          echo "| 项目 | 信息 |"
+          echo "| Field | Value |"
           echo "|------|------|"
-          echo "| 编译者 | ${{ github.actor }} |"
-          echo "| 机型 | ${PROFILE} |"
-          echo "| 内核版本 | ${{ env.KERNEL_VER }} |"
-          echo "| 管理地址 | ${DISPLAY_IP} |"
-          echo "| 主机名 | ${DISPLAY_HOSTNAME} |"
-          echo "| 默认用户 | root |"
-          echo "| 默认密码 | 空 |"
+          echo "| Builder | ${{ github.actor }} |"
+          echo "| Profile | ${PROFILE} |"
+          echo "| Kernel | ${{ env.KERNEL_VER }} |"
+          echo "| Management address | ${DISPLAY_IP} |"
+          echo "| Hostname | ${DISPLAY_HOSTNAME} |"
+          echo "| Default user | root |"
+          echo "| Default password | empty |"
           echo ""
           if [ -n "$EXTRA" ]; then
-            echo "### 额外添加的包"
+            echo "### Additional packages"
             echo "$EXTRA" | sed 's/^/- /'
           else
-            echo "### 额外添加的包"
-            echo "无"
+            echo "### Additional packages"
+            echo "None"
           fi
         } >> release.txt
         echo "status=success" >> $GITHUB_OUTPUT
 
 
 
-    - name: Generate file list
+    - name: Verify release file list
       if: env.UPLOAD_RELEASE == 'true' && steps.organize.outputs.status == 'success'
       run: |
         find ${{ env.FIRMWARE }} -type f > file_list.txt
@@ -676,7 +646,7 @@ jobs:
 
 
 
-    - name: Upload firmware to release
+    - name: Publish firmware release
       if: env.UPLOAD_RELEASE == 'true' && steps.organize.outputs.status == 'success'
       uses: ncipollo/release-action@v1.21.0
       timeout-minutes: 15
@@ -690,36 +660,3 @@ jobs:
         allowUpdates: true
         draft: false
         prerelease: false
-
-    - name: Delete old workflow runs via GitHub API
-      if: always()
-      timeout-minutes: 5
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        RETAIN_DAYS: 7
-        KEEP_MINIMUM_RUNS: 5
-      run: |
-        set -Eeuo pipefail
-        RUNS=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
-          --connect-timeout 10 --max-time 30 \
-          "https://api.github.com/repos/${{ github.repository }}/actions/runs?per_page=100")
-        CUTOFF=$(date -d "-${RETAIN_DAYS} days" +%s)
-        DEL_IDS=$(echo "$RUNS" | jq -r --arg cutoff "$CUTOFF" --argjson keep "$KEEP_MINIMUM_RUNS" '
-          [.workflow_runs[]
-            | select((now - (.created_at | fromdateiso8601)) > ($cutoff | tonumber))
-            | {id, created_at}
-          ]
-          | sort_by(.created_at)
-          | .[:-$keep]
-          | .[].id
-        ')
-        if [[ -z "$DEL_IDS" ]]; then
-          echo "No old runs to delete."
-        else
-          echo "$DEL_IDS" | while read run_id; do
-            echo "Deleting run $run_id"
-            curl --fail --silent --show-error -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
-              --connect-timeout 10 --max-time 30 \
-              "https://api.github.com/repos/${{ github.repository }}/actions/runs/$run_id"
-          done
-        fi

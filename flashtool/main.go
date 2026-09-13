@@ -55,10 +55,10 @@ func main() {
 	bootImg := filepath.Join(romDir, "boot.img")
 	systemImg := filepath.Join(romDir, "system.img")
 	if _, err := os.Stat(bootImg); os.IsNotExist(err) {
-		   fatal("缺少 rom/boot.img\n  请从以下地址下载固件后放入 rom 文件夹：\n  https://github.com/dagoujjj/410-wrt-build")
+		fatal("缺少 rom/boot.img\n  请从以下地址下载固件后放入 rom 文件夹：\n  https://github.com/dagoujjj/410-wrt-build")
 	}
 	if _, err := os.Stat(systemImg); os.IsNotExist(err) {
-		   fatal("缺少 rom/system.img\n  请从以下地址下载固件后放入 rom 文件夹：\n  https://github.com/dagoujjj/410-wrt-build")
+		fatal("缺少 rom/system.img\n  请从以下地址下载固件后放入 rom 文件夹：\n  https://github.com/dagoujjj/410-wrt-build")
 	}
 	fmt.Printf("  %s✓%s 底层固件：完整\n", colorGreen, colorReset)
 	fmt.Printf("  %s✓%s boot.img：就绪\n", colorGreen, colorReset)
@@ -296,7 +296,7 @@ func checkRomFiles(romDir string) error {
 		}
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("rom/ 目录缺少底层固件：\n     %s", strings.Join(missing, "\n     "))
+		return fmt.Errorf("rom/ is missing required baseband files:\n     %s", strings.Join(missing, "\n     "))
 	}
 	return nil
 }
@@ -322,7 +322,7 @@ func enableANSI() {
 	_ = os.Setenv("TERM", "xterm-256color")
 }
 
-// trimOKAY 去掉 Fastboot 响应头的 "OKAY" 前缀
+// trimOKAY removes the "OKAY" prefix from a Fastboot response.
 func trimOKAY(s string) string {
 	return strings.TrimSpace(strings.TrimPrefix(s, "OKAY"))
 }

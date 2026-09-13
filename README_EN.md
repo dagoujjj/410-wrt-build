@@ -14,7 +14,7 @@ Tired of finding a decent firmware? Software repos won't install, the version is
 1. First, fork this repository to your own account
    ![Fork repo](img/0.png)
 
-2. Your repo → **Actions** → **Build_imm_Snapdragon_410_series** → **Run workflow** → Select your device model → Enter required plugin packages → Run workflow to start building
+2. Manually run **Build ImmortalWrt Snapdragon 410 Firmware** from Actions, choose the device profile, enter optional packages, and start the workflow.
    ![Build tutorial](img/1.png)
 
 3. Build takes approx. ⏱️ 1.5–2 hours; more plugins = longer build time
@@ -68,15 +68,15 @@ Tired of finding a decent firmware? Software repos won't install, the version is
 | Path                   | Description                                                                                   |
 |------------------------|-----------------------------------------------------------------------------------------------|
 | `config/`              | Build config files for each device model (e.g. `ufi003.config`)                               |
-| `files/`               | Files overlaid into the firmware image — system configs. [See this repo for custom homepage guide](https://github.com/x7780/suishen-wifi) |
+| `files/`               | System configuration files overlaid into the firmware image |
 | `img/`                 | Tutorial screenshots used in the README                                                       |
 | `scripts/`             | Helper scripts executed during the build                                                      |
 | `工具与脚本/`          | Flashing tools and helper scripts collection: 9008 driver, baseband, full flashing scripts, etc. |
-| `刷机脚本/`            | Integrated into the one-click flash package after a successful build                          |
+| `flash_assets/`            | Low-level files and patch scripts included in the generated flash package                 |
 | `diy-part1.sh`         | Phase 1 custom script — runs after fetching source (add repos, apply patches, etc.)           |
 | `diy-part2.sh`         | Phase 2 custom script — runs after default config is generated (tweak config, add files, etc.)|
-| `upstream_history.txt` | Historical upstream hash log — use a past hash if the latest won't compile                    |
-| `upstream_lock.txt`    | Periodically updated lock of a known-good upstream hash to avoid upstream breakage             |
+| `verify_upstream.yml`     | Manually verifies the upstream source and updates the lock; does not build firmware |
+| `upstream_lock.txt`    | Manually verified upstream commit used for reproducible builds                                |
 | `极简的包名.txt`       | Quick-reference list of common plugin package names (backup, not essential)                   |
 | `.config`              | Default build config, defines global build options                                            |
 

@@ -830,7 +830,7 @@ async function triggerBuild() {
     if (!wfRes.ok) throw new Error(`${t("err_wf_list")}${wfRes.status}）`);
 
     const wfData   = await wfRes.json();
-    const workflow = wfData.workflows.find(w => w.path.includes("Build_高通410 imm"));
+    const workflow = wfData.workflows.find(w => w.path.includes("build_firmware.yml"));
     if (!workflow) throw new Error(t("err_no_wf"));
 
     const dispatch = async (ref) => fetch(

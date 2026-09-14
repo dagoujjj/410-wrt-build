@@ -208,10 +208,12 @@ jobs:
       run: |
         set -Eeuo pipefail
         settings_file="openwrt/package/emortal/default-settings/files/99-default-settings-chinese"
-        test -f "$settings_file"
-        grep -q 'apk_mirror="https://mirrors.vsean.net/openwrt"' "$settings_file"
-        sed -i 's#apk_mirror="https://mirrors.vsean.net/openwrt"#apk_mirror="https://downloads.immortalwrt.org"#' "$settings_file"
-        grep -q 'apk_mirror="https://downloads.immortalwrt.org"' "$settings_file"
+        if [ -f "$settings_file" ]; then
+          # Older Chinese defaults rewrite the official APK host to a
+          # regional mirror. Preserve the upstream path and signature layout,
+          # but keep the canonical ImmortalWrt host.
+          sed -i 's#https://mirrors.vsean.net/openwrt#https://downloads.immortalwrt.org#g' "$settings_file"
+        fi
         if grep -R -n 'mirrors.vsean.net/openwrt' openwrt/package openwrt/feeds 2>/dev/null; then
           echo "::error::A regional package mirror remains in the build inputs."
           exit 1
@@ -419,9 +421,12 @@ jobs:
           grep -q '^CONFIG_PACKAGE_apk-openssl=y$' .config
           grep -q '^# CONFIG_PACKAGE_opkg is not set$' .config
           grep -q '^CONFIG_LINUX_6_18=y$' .config
+        else
+          grep -q '^# CONFIG_USE_APK is not set$' .config
+          grep -q '^CONFIG_PACKAGE_opkg=y$' .config
         fi
         grep -q '^CONFIG_PACKAGE_libustream-openssl=y$' .config
-        echo "wf2 package, APK, kernel, and SSL invariants verified."
+        echo "Package manager, kernel, and SSL invariants verified."
     - name: Prefetch kernel source
       timeout-minutes: 30
       run: |
@@ -543,6 +548,27 @@ jobs:
           compile-retry.log
         if-no-files-found: ignore
 
+    - name: Verify runtime package repositories
+      if: steps.compile.outputs.status == 'success' && !cancelled()
+      run: |
+        set -Eeuo pipefail
+        if [ "$INPUT_PROFILE" = "wf2" ]; then
+          repository_file=$(find /mnt/openwrt/build_dir -type f \
+            -path '*/etc/apk/repositories.d/distfeeds.list' -print -quit)
+          test -n "$repository_file"
+          grep -Eq '^https://downloads\.immortalwrt\.org/' "$repository_file"
+        else
+          repository_file=$(find /mnt/openwrt/build_dir -type f \
+            -path '*/etc/opkg/distfeeds.conf' -print -quit)
+          test -n "$repository_file"
+          grep -Eq '^src/gz[[:space:]].*https://downloads\.immortalwrt\.org/' "$repository_file"
+        fi
+        if grep -q 'mirrors.vsean.net/openwrt' "$repository_file"; then
+          echo "::error::The effective runtime repository still uses a regional mirror."
+          exit 1
+        fi
+        echo "Verified official runtime repository: $repository_file"
+
     - name: Read kernel version
       run: |
         KERNEL_VER=$(find /mnt/openwrt/build_dir -type f -name .kernelversion -print -quit | xargs -r cat || true)
@@ -596,16 +622,19 @@ jobs:
         ZIP_NAME="OpenWrt_${PROFILE}${{ env.FILE_DATE }}_flash_package.zip"
         cd flash_package && zip -r "../$ZIP_NAME" . && cd ..
 
-        manifest=$(find . -maxdepth 1 -name '*.manifest' -print -quit)
-        test -n "$manifest"
-        grep -Eq '^kmod-dummy([[:space:]]|$)' "$manifest" || {
-          echo "::error::The final wf2 manifest does not contain kmod-dummy"
-          exit 1
-        }
-        echo "Verified kmod-dummy in $manifest"
+        if [ "$INPUT_PROFILE" = "wf2" ]; then
+          manifest=$(find . -maxdepth 1 -name '*.manifest' -print -quit)
+          test -n "$manifest"
+          grep -Eq '^kmod-dummy([[:space:]]|$)' "$manifest" || {
+            echo "::error::The final wf2 manifest does not contain kmod-dummy"
+            exit 1
+          }
+          echo "Verified kmod-dummy in $manifest"
+        else
+          echo "Skipping wf2-only kmod-dummy manifest assertion for profile $PROFILE"
+        fi
 
-        # Assemble the release directory with the archive and build metadata.
-        mkdir -p release_files
+        # Assemble the release directory with the archive and build metadata.        mkdir -p release_files
         mv "$ZIP_NAME" release_files/
         cp *.manifest release_files/ 2>/dev/null || true
         cp *.buildinfo release_files/ 2>/dev/null || true

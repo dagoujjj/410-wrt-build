@@ -531,8 +531,12 @@ jobs:
 
     - name: Read kernel version
       run: |
-        KERNEL_VER=$(cat /mnt/openwrt/build_dir/target-*/linux-*/linux-*/.kernelversion 2>/dev/null | head -1 || echo "unknown")
-        echo "KERNEL_VER=$KERNEL_VER" >> $GITHUB_ENV
+        KERNEL_VER=$(find /mnt/openwrt/build_dir -type f -name .kernelversion -print -quit | xargs -r cat || true)
+        if [ -z "$KERNEL_VER" ]; then
+          KERNEL_VER=$(sed -n 's/^CONFIG_LINUX_\([0-9_]*\)=y$/\1/p' openwrt/.config | tr '_' '.' | head -1)
+        fi
+        KERNEL_VER=${KERNEL_VER:-unknown}
+        echo "KERNEL_VER=$KERNEL_VER" >> "$GITHUB_ENV"
 
 
     - name: Verify build storage
@@ -583,7 +587,14 @@ jobs:
         mv "$ZIP_NAME" release_files/
         cp *.manifest release_files/ 2>/dev/null || true
         cp *.buildinfo release_files/ 2>/dev/null || true
-        cp sha256sums release_files/ 2>/dev/null || true
+        # Generate checksums for the files that are actually published. The
+        # target's source checksum list also names intermediate files removed
+        # while assembling the flash package, so copying it would be invalid.
+        (
+          cd release_files
+          find . -maxdepth 1 -type f ! -name sha256sums -print0 \
+            | xargs -0 sha256sum > sha256sums
+        )
 
         echo "FIRMWARE=$PWD/release_files" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT

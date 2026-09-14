@@ -634,7 +634,8 @@ jobs:
           echo "Skipping wf2-only kmod-dummy manifest assertion for profile $PROFILE"
         fi
 
-        # Assemble the release directory with the archive and build metadata.        mkdir -p release_files
+        # Assemble the release directory with the archive and build metadata.
+        mkdir -p release_files
         mv "$ZIP_NAME" release_files/
         cp *.manifest release_files/ 2>/dev/null || true
         cp *.buildinfo release_files/ 2>/dev/null || true

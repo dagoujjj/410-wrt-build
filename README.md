@@ -22,7 +22,7 @@
 4. 上面出现绿色对号，就代表编译成功了，你的仓库 → **releases** → 下载固件包
 ![下载固件包](img/3.png)
 
-5. 如果你原本系统是linux或openwrt系统，就可以按照下面步骤升级就行。
+5. 如果设备已经运行 Linux 或 OpenWrt，请使用 Release 中的 `flash_openstick.bat` 或其他配套 fastboot 刷机流程更新。当前 wf2 镜像会重写 `boot` 和 `rootfs` 分区，尚未提供经过目标设备验证的 LuCI 动态升级/sysupgrade 路径，不要使用通用升级入口。
 ![升级固件](img/4.png)
 
 如果你设备没刷过linux或者openwrt，还是原版安卓，就按下面教程刷入，注意必须备份分区。
@@ -87,6 +87,8 @@
 | 2 | luci-app-package-manager | 软件包管理 | 系统 → 软件包 |
 | 3 | luci-app-firewallr | 防火墙插件 | 系统 → 防火墙 |
 ### 已启用的默认驱动模块，请不要重复添加。
+
+`wf2` 额外内置 `kmod-dummy`，用于提供 Linux dummy 网络接口；它会随固件构建进入最终 manifest。
 
 | 序号 | 插件 | 说明 | 菜单位置 |
 |-----|-----|------|---------|

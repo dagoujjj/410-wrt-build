@@ -204,6 +204,20 @@ jobs:
     - name: Install feeds
       run: cd openwrt && ./scripts/feeds install -a -f
 
+    - name: Keep official ImmortalWrt package repositories
+      run: |
+        set -Eeuo pipefail
+        settings_file="openwrt/package/emortal/default-settings/files/99-default-settings-chinese"
+        test -f "$settings_file"
+        grep -q 'apk_mirror="https://mirrors.vsean.net/openwrt"' "$settings_file"
+        sed -i 's#apk_mirror="https://mirrors.vsean.net/openwrt"#apk_mirror="https://downloads.immortalwrt.org"#' "$settings_file"
+        grep -q 'apk_mirror="https://downloads.immortalwrt.org"' "$settings_file"
+        if grep -R -n 'mirrors.vsean.net/openwrt' openwrt/package openwrt/feeds 2>/dev/null; then
+          echo "::error::A regional package mirror remains in the build inputs."
+          exit 1
+        fi
+        echo "Official ImmortalWrt package repository configured."
+
     - name: Prepare trusted source archives
       timeout-minutes: 60
       run: |
@@ -384,7 +398,7 @@ jobs:
         )
         if [ "$INPUT_PROFILE" = "wf2" ]; then
           required_packages+=(
-            kmod-tun kmod-ifb kmod-sched-cake kmod-tcp-bbr kmod-wireguard
+            kmod-dummy kmod-tun kmod-ifb kmod-sched-cake kmod-tcp-bbr kmod-wireguard
             wireguard-tools luci-proto-wireguard tc-full ethtool tcpdump luci-app-sqm
           )
         fi
@@ -581,6 +595,14 @@ jobs:
         unix2dos flash_package/*.bat 2>/dev/null || sed -i 's/\r//' flash_package/*.bat && sed -i 's/$/\r/' flash_package/*.bat
         ZIP_NAME="OpenWrt_${PROFILE}${{ env.FILE_DATE }}_flash_package.zip"
         cd flash_package && zip -r "../$ZIP_NAME" . && cd ..
+
+        manifest=$(find . -maxdepth 1 -name '*.manifest' -print -quit)
+        test -n "$manifest"
+        grep -Eq '^kmod-dummy([[:space:]]|$)' "$manifest" || {
+          echo "::error::The final wf2 manifest does not contain kmod-dummy"
+          exit 1
+        }
+        echo "Verified kmod-dummy in $manifest"
 
         # Assemble the release directory with the archive and build metadata.
         mkdir -p release_files

@@ -23,7 +23,7 @@ Tired of finding a decent firmware? Software repos won't install, the version is
 4. A green checkmark means a successful build. Your repo → **Releases** → Download the firmware package
    ![Download firmware](img/3.png)
 
-5. If your device is already running Linux or OpenWrt, follow the steps below to upgrade.
+5. If the device is already running Linux or OpenWrt, use `flash_openstick.bat` or another bundled fastboot procedure from the Release to update it. The current wf2 image rewrites the `boot` and `rootfs` partitions; it does not provide a target-validated LuCI dynamic-upgrade/sysupgrade path, so do not use a generic upgrade entry.
    ![Upgrade firmware](img/4.png)
 
    If your device has never been flashed with Linux or OpenWrt and is still on stock Android, follow the tutorial below. **Important: back up your partitions.**

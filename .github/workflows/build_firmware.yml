@@ -430,19 +430,23 @@ jobs:
           # their KCONFIG symbol into vmlinux; no separate .ko package exists.
           case "$pkg" in
             kmod-lib-xxhash)
-              kernel_patchver=$(sed -n 's/^KERNEL_PATCHVER:=//p' target/linux/msm89xx/Makefile)
-              kernel_config="target/linux/msm89xx/config-${kernel_patchver}"
-              grep -q '^CONFIG_XXHASH=y$' "$kernel_config" || {
-                echo "::error::Selected kernel module is neither packaged nor built into the target kernel: $pkg"
-                exit 1
-              }
-              echo "Accepted $pkg as target-kernel built-in CONFIG_XXHASH=y"
+              kernel_symbol='CONFIG_XXHASH'
+              ;;
+            kmod-lib-zlib-inflate)
+              kernel_symbol='CONFIG_ZLIB_INFLATE'
               ;;
             *)
               echo "::error::Selected kernel module is not built in: $pkg"
               exit 1
               ;;
           esac
+          kernel_patchver=$(sed -n 's/^KERNEL_PATCHVER:=//p' target/linux/msm89xx/Makefile)
+          kernel_config="target/linux/msm89xx/config-${kernel_patchver}"
+          grep -q "^${kernel_symbol}=y$" "$kernel_config" || {
+            echo "::error::Selected kernel module is neither packaged nor built into the target kernel: $pkg (${kernel_symbol})"
+            exit 1
+          }
+          echo "Accepted $pkg as target-kernel built-in ${kernel_symbol}=y"
         done
         if grep -Eq '^CONFIG_PACKAGE_kmod-[^=]+=m$' "$profile_config"; then
           echo "::error::The profile contains a modular kmod selection."

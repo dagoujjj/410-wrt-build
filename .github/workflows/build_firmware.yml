@@ -423,10 +423,26 @@ jobs:
         mapfile -t profile_kmods < <(sed -n 's/^CONFIG_PACKAGE_\(kmod-[^=]*\)=y$/\1/p' "$profile_config")
         test "${#profile_kmods[@]}" -gt 0
         for pkg in "${profile_kmods[@]}"; do
-          grep -q "^CONFIG_PACKAGE_${pkg}=y$" .config || {
-            echo "::error::Selected kernel module is not built in: $pkg"
-            exit 1
-          }
+          if grep -q "^CONFIG_PACKAGE_${pkg}=y$" .config; then
+            continue
+          fi
+          # Some kernel packages are hidden because the target already builds
+          # their KCONFIG symbol into vmlinux; no separate .ko package exists.
+          case "$pkg" in
+            kmod-lib-xxhash)
+              kernel_patchver=$(sed -n 's/^KERNEL_PATCHVER:=//p' target/linux/msm89xx/Makefile)
+              kernel_config="target/linux/msm89xx/config-${kernel_patchver}"
+              grep -q '^CONFIG_XXHASH=y$' "$kernel_config" || {
+                echo "::error::Selected kernel module is neither packaged nor built into the target kernel: $pkg"
+                exit 1
+              }
+              echo "Accepted $pkg as target-kernel built-in CONFIG_XXHASH=y"
+              ;;
+            *)
+              echo "::error::Selected kernel module is not built in: $pkg"
+              exit 1
+              ;;
+          esac
         done
         if grep -Eq '^CONFIG_PACKAGE_kmod-[^=]+=m$' "$profile_config"; then
           echo "::error::The profile contains a modular kmod selection."

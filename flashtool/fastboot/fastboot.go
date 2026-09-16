@@ -2,6 +2,7 @@
 package fastboot
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -179,63 +180,31 @@ func (d *Device) Erase(partition string) error {
 
 // Flash 刷写分区，支持进度回调
 func (d *Device) Flash(partition string, data []byte, progress func(sent, total int)) error {
-	// 1. 告诉设备准备接收多少字节
-	resp, err := d.Command(fmt.Sprintf("download:%08x", len(data)))
-	if err != nil {
-		return err
-	}
-	if !strings.HasPrefix(resp, "DATA") {
-		return fmt.Errorf("download 命令失败：%s", resp)
-	}
-
-	// 2. 分块发送数据
-	total := len(data)
-	sent := 0
-	for sent < total {
-		end := sent + maxPacket
-		if end > total {
-			end = total
-		}
-		n, err := d.outEP.Write(data[sent:end])
-		if err != nil {
-			return fmt.Errorf("数据传输失败（offset %d）：%w", sent, err)
-		}
-		sent += n
-		if progress != nil {
-			progress(sent, total)
-		}
-	}
-
-	// 3. 等待 OKAY
-	resp, err = d.readResponse()
-	if err != nil {
-		return err
-	}
-	if !strings.HasPrefix(resp, "OKAY") {
-		return fmt.Errorf("download 完成确认失败：%s", resp)
-	}
-
-	// 4. 发送 flash 命令
-	resp, err = d.Command("flash:" + partition)
-	if err != nil {
-		return err
-	}
-	if !strings.HasPrefix(resp, "OKAY") {
-		return fmt.Errorf("flash %s 失败：%s", partition, resp)
-	}
-	return nil
+	return d.flashReader(partition, bytes.NewReader(data), len(data), maxPacket, progress)
 }
 
-// FlashFile 从文件刷写分区
+// FlashFile 从文件流式刷写分区，避免将大文件一次性载入内存。
 func (d *Device) FlashFile(partition, path string, progress func(sent, total int)) error {
-	data, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("读取文件失败 %s：%w", path, err)
 	}
-	return d.Flash(partition, data, progress)
+	defer f.Close()
+
+	info, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("读取文件信息失败 %s：%w", path, err)
+	}
+	if info.Size() > int64(^uint(0)>>1) {
+		return fmt.Errorf("文件过大，无法在当前平台传输：%s", path)
+	}
+	return d.flashReader(partition, f, int(info.Size()), maxPacket, progress)
 }
 
-// FlashFileSparse 大文件分块刷写（用于 system.img，支持 -S 200m）
+// FlashFileSparse streams one download transaction for a large image.
+// Fastboot writes each flash command from the start of the partition, so
+// splitting the image into multiple Flash calls would overwrite earlier data.
+// chunkSize is retained for API compatibility and is only used as the buffer size.
 func (d *Device) FlashFileSparse(partition, path string, chunkSize int, progress func(sent, total int)) error {
 	f, err := os.Open(path)
 	if err != nil {
@@ -243,31 +212,89 @@ func (d *Device) FlashFileSparse(partition, path string, chunkSize int, progress
 	}
 	defer f.Close()
 
-	info, _ := f.Stat()
-	total := int(info.Size())
-	sent := 0
+	info, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("读取文件信息失败 %s：%w", path, err)
+	}
+	if info.Size() > int64(^uint(0)>>1) {
+		return fmt.Errorf("文件过大，无法在当前平台传输：%s", path)
+	}
+	if chunkSize <= 0 || chunkSize > 4*1024*1024 {
+		chunkSize = 4 * 1024 * 1024
+	}
+	return d.flashReader(partition, f, int(info.Size()), chunkSize, progress)
+}
 
-	buf := make([]byte, chunkSize)
-	for {
-		n, err := io.ReadFull(f, buf)
-		if n == 0 {
-			break
+// flashReader performs exactly one download/flash transaction for a reader.
+func (d *Device) flashReader(partition string, r io.Reader, total, bufferSize int, progress func(sent, total int)) error {
+	if total < 0 {
+		return fmt.Errorf("无效的数据大小：%d", total)
+	}
+	resp, err := d.Command(fmt.Sprintf("download:%08x", total))
+	if err != nil {
+		return err
+	}
+	if !strings.HasPrefix(resp, "DATA") {
+		return fmt.Errorf("download 命令失败：%s", resp)
+	}
+	if bufferSize <= 0 || bufferSize > 4*1024*1024 {
+		bufferSize = 4 * 1024 * 1024
+	}
+
+	buf := make([]byte, bufferSize)
+	sent := 0
+	for sent < total {
+		want := total - sent
+		if want > len(buf) {
+			want = len(buf)
 		}
-		chunk := buf[:n]
-		if flashErr := d.Flash(partition, chunk, func(s, t int) {
-			if progress != nil {
-				progress(sent+s, total)
+		n, readErr := io.ReadFull(r, buf[:want])
+		if n > 0 {
+			written := 0
+			for written < n {
+				end := written + maxPacket
+				if end > n {
+					end = n
+				}
+				chunkWritten := 0
+				for chunkWritten < end-written {
+					m, writeErr := d.outEP.Write(buf[written+chunkWritten : end])
+					if writeErr != nil {
+						return fmt.Errorf("数据传输失败（offset %d）：%w", sent+written+chunkWritten, writeErr)
+					}
+					if m <= 0 {
+						return fmt.Errorf("数据传输失败（offset %d）：写入 0 字节", sent+written+chunkWritten)
+					}
+					chunkWritten += m
+				}
+				written += chunkWritten
 			}
-		}); flashErr != nil {
-			return flashErr
+			sent += n
+			if progress != nil {
+				progress(sent, total)
+			}
 		}
-		sent += n
-		if err == io.EOF || err == io.ErrUnexpectedEOF {
-			break
+		if readErr != nil {
+			if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
+				return fmt.Errorf("文件数据不足：已读取 %d/%d 字节", sent, total)
+			}
+			return fmt.Errorf("读取数据失败（offset %d）：%w", sent, readErr)
 		}
-		if err != nil {
-			return err
-		}
+	}
+
+	resp, err = d.readResponse()
+	if err != nil {
+		return err
+	}
+	if !strings.HasPrefix(resp, "OKAY") {
+		return fmt.Errorf("download 完成确认失败：%s", resp)
+	}
+	resp, err = d.Command("flash:" + partition)
+	if err != nil {
+		return err
+	}
+	if !strings.HasPrefix(resp, "OKAY") {
+		return fmt.Errorf("flash %s 失败：%s", partition, resp)
 	}
 	return nil
 }

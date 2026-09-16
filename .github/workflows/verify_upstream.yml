@@ -1,0 +1,96 @@
+name: Verify upstream source
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: verify-upstream-source
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: lkiuyu/immortalwrt
+  UPSTREAM_REF: master
+  LOCK_FILE: upstream_lock.txt
+
+jobs:
+  verify:
+    name: Verify and lock upstream commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve upstream commit
+        id: upstream
+        run: |
+          set -Eeuo pipefail
+          latest=$(git ls-remote --exit-code "https://github.com/${UPSTREAM_REPO}.git" "refs/heads/${UPSTREAM_REF}" | awk 'NR == 1 { print $1 }')
+          [[ "$latest" =~ ^[0-9a-f]{40}$ ]]
+          echo "commit=$latest" >> "$GITHUB_OUTPUT"
+          echo "Resolved ${UPSTREAM_REPO}:${UPSTREAM_REF} at $latest"
+
+      - name: Compare locked commit
+        id: lock
+        run: |
+          set -Eeuo pipefail
+          current=""
+          if [ -f "$LOCK_FILE" ]; then
+            current=$(tr -d '[:space:]' < "$LOCK_FILE")
+          fi
+          [[ -z "$current" || "$current" =~ ^[0-9a-f]{40}$ ]]
+          if [ "$current" = "${{ steps.upstream.outputs.commit }}" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "The locked commit is already current."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "The upstream commit changed from ${current:-none} to ${{ steps.upstream.outputs.commit }}."
+          fi
+
+      - name: Fetch and inspect exact commit
+        if: steps.lock.outputs.changed == 'true'
+        run: |
+          set -Eeuo pipefail
+          workdir=$(mktemp -d)
+          trap 'rm -rf "$workdir"' EXIT
+          git -C "$workdir" init -q
+          git -C "$workdir" remote add origin "https://github.com/${UPSTREAM_REPO}.git"
+          git -C "$workdir" fetch --depth=1 origin "${{ steps.upstream.outputs.commit }}"
+          git -C "$workdir" checkout --detach -q "${{ steps.upstream.outputs.commit }}"
+          test "$(git -C "$workdir" rev-parse HEAD)" = "${{ steps.upstream.outputs.commit }}"
+          test -f "$workdir/target/linux/msm89xx/Makefile"
+          test -f "$workdir/package/system/apk/Makefile"
+          test -f "$workdir/target/linux/generic/config-6.18"
+          grep -q '^KERNEL_PATCHVER:=' "$workdir/target/linux/msm89xx/Makefile"
+          grep -q '^CONFIG_TUN' "$workdir/target/linux/generic/config-6.18"
+          git -C "$workdir" fsck --full --no-reflogs
+          echo "Exact upstream commit and required build interfaces verified."
+
+      - name: Update lock metadata
+        if: steps.lock.outputs.changed == 'true'
+        run: |
+          set -Eeuo pipefail
+          commit="${{ steps.upstream.outputs.commit }}"
+          printf '%s\n' "$commit" > "$LOCK_FILE"
+          printf '%s %s\n' "$(date -u +%F)" "$commit" | cat - upstream_history.txt 2>/dev/null > upstream_history.txt.tmp || true
+          if [ -f upstream_history.txt.tmp ]; then
+            mv upstream_history.txt.tmp upstream_history.txt
+          else
+            printf '%s %s\n' "$(date -u +%F)" "$commit" > upstream_history.txt
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "$LOCK_FILE" upstream_history.txt
+          git commit -m "chore: lock upstream source commit"
+          git push origin HEAD:main
+
+      - name: Report verification result
+        run: |
+          echo "Verified ${UPSTREAM_REPO}:${UPSTREAM_REF} at ${{ steps.upstream.outputs.commit }}"
+          echo "Repository build workflows consume this immutable commit through ${LOCK_FILE}."

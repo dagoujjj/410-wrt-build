@@ -1,0 +1,246 @@
+name: Build Flash Tool
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (for example v1.0.0)'
+        required: false
+        default: 'v1.0.0'
+        type: string
+
+env:
+  VERSION: ${{ github.event.inputs.version || 'v1.0.0' }}
+
+jobs:
+  build:
+    name: Build flash tool
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@v7.0.0
+        with:
+          go-version: '1.22'
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y libusb-1.0-0-dev pkg-config p7zip-full zip
+          sudo apt-get install -y gcc-mingw-w64-x86-64 gcc-mingw-w64-i686 gcc-aarch64-linux-gnu
+          go install github.com/akavel/rsrc@v0.10.2
+
+      - name: Download Windows libusb static libraries
+        run: |
+          curl --fail --location --retry 3 --connect-timeout 30 \
+            https://github.com/libusb/libusb/releases/download/v1.0.27/libusb-1.0.27.7z \
+            -o libusb.7z
+          echo '19835e290f46fab6bd8ce4be6ab7dc5209f1c04bad177065df485e51dc4118c8  libusb.7z' | sha256sum -c -
+          7z x libusb.7z -olibusb_win
+          # Print the extracted layout for diagnostics
+          echo "=== Static libraries ==="
+          find libusb_win -name "*.a"
+          echo "=== Headers ==="
+          find libusb_win -name "libusb.h"
+
+      - name: Download UsbDk installers
+        run: |
+          mkdir -p flashtool/winenv/usbdk
+          curl --fail --location --retry 3 --connect-timeout 30 \
+            "https://github.com/daynix/UsbDk/releases/download/v1.00-22/UsbDk_1.0.22_x64.msi" \
+            -o flashtool/winenv/usbdk/usbdk_x64.msi
+          curl --fail --location --retry 3 --connect-timeout 30 \
+            "https://github.com/daynix/UsbDk/releases/download/v1.00-22/UsbDk_1.0.22_x86.msi" \
+            -o flashtool/winenv/usbdk/usbdk_x86.msi
+          echo '91f6f695e1e13c656024e6d3b55620bf08d8835ef05ee0496935ba6bb62466a5  flashtool/winenv/usbdk/usbdk_x64.msi' | sha256sum -c -
+          echo '278c58e0d8d33eba7de51f8cbee78b09f9f3c0ee1c7aae601fd77c7ec69e28ef  flashtool/winenv/usbdk/usbdk_x86.msi' | sha256sum -c -
+          ls -lh flashtool/winenv/usbdk/
+
+      - name: Validate version input
+        env:
+          VERSION: ${{ env.VERSION }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
+
+      - name: Download Go dependencies
+        working-directory: flashtool
+        run: |
+          go mod download
+
+      - name: Build Linux amd64
+        working-directory: flashtool
+        env:
+          GOOS: linux
+          GOARCH: amd64
+          CGO_ENABLED: 1
+        run: |
+          go build \
+            -ldflags="-s -w -X main.Version=${{ env.VERSION }}" \
+            -trimpath \
+            -o ../dist/linux_x64/flash_tool .
+
+      - name: Generate Windows manifest resources
+        working-directory: flashtool
+        run: |
+          rsrc -manifest app.manifest -o rsrc_amd64.syso -arch amd64
+          rsrc -manifest app.manifest -o rsrc_386.syso -arch 386
+
+      - name: Build Windows amd64
+        working-directory: flashtool
+        env:
+          GOOS: windows
+          GOARCH: amd64
+          CGO_ENABLED: 1
+          CC: x86_64-w64-mingw32-gcc
+        run: |
+          LIBUSB_DIR="${{ github.workspace }}/libusb_win"
+          INC="${LIBUSB_DIR}/include/libusb-1.0"
+          LIB_DIR="${LIBUSB_DIR}/MinGW64/static"
+          echo "Include directory: $INC"
+          echo "Library directory: $LIB_DIR"
+          ls "$LIB_DIR"
+          cp rsrc_amd64.syso rsrc.syso
+          CGO_CFLAGS="-I${INC}" \
+          CGO_LDFLAGS="-L${LIB_DIR} -Wl,-Bstatic -lusb-1.0 -Wl,-Bdynamic -lsetupapi -static-libgcc" \
+          go build \
+            -ldflags="-s -w -X main.Version=${{ env.VERSION }}" \
+            -trimpath \
+            -o ../dist/win_x64/flash_tool.exe .
+          rm -f rsrc.syso
+
+      - name: Build Windows 386
+        working-directory: flashtool
+        env:
+          GOOS: windows
+          GOARCH: 386
+          CGO_ENABLED: 1
+          CC: i686-w64-mingw32-gcc
+        run: |
+          LIBUSB_DIR="${{ github.workspace }}/libusb_win"
+          INC="${LIBUSB_DIR}/include/libusb-1.0"
+          LIB_DIR="${LIBUSB_DIR}/MinGW32/static"
+          echo "Include directory: $INC"
+          echo "Library directory: $LIB_DIR"
+          ls "$LIB_DIR"
+          cp rsrc_386.syso rsrc.syso
+          CGO_CFLAGS="-I${INC}" \
+          CGO_LDFLAGS="-L${LIB_DIR} -Wl,-Bstatic -lusb-1.0 -Wl,-Bdynamic -lsetupapi -static-libgcc" \
+          go build \
+            -ldflags="-s -w -X main.Version=${{ env.VERSION }}" \
+            -trimpath \
+            -o ../dist/win_x86/flash_tool.exe .
+          rm -f rsrc.syso rsrc_amd64.syso rsrc_386.syso
+
+      - name: Build Linux arm64
+        working-directory: flashtool
+        timeout-minutes: 15
+        env:
+          GOOS: linux
+          GOARCH: arm64
+          CGO_ENABLED: 1
+          CC: aarch64-linux-gnu-gcc
+        run: |
+          sudo apt-get install -y gcc-aarch64-linux-gnu libusb-1.0-0-dev
+          # Install the arm64 libusb package when available.
+          sudo dpkg --add-architecture arm64 || true
+          sudo apt-get update -q || true
+          sudo apt-get install -y libusb-1.0-0-dev:arm64 2>/dev/null || true
+          # Locate the arm64 libusb headers and library.
+          INC=$(find /usr -name "libusb.h" 2>/dev/null | head -1 | xargs dirname || echo "/usr/include/libusb-1.0")
+          LIB=$(find /usr/lib/aarch64-linux-gnu -name "libusb-1.0.a" 2>/dev/null | head -1 || echo "")
+          echo "INC=$INC LIB=$LIB"
+          if [ -n "$LIB" ]; then
+            CGO_CFLAGS="-I${INC}" \
+            CGO_LDFLAGS="-L$(dirname $LIB) -Wl,-Bstatic -lusb-1.0 -Wl,-Bdynamic -ludev" \
+            go build \
+              -ldflags="-s -w -X main.Version=${{ env.VERSION }}" \
+              -trimpath \
+              -o ../dist/linux_arm64/flash_tool .
+          else
+            echo "arm64 libusb was not found; skipping the optional arm64 build."
+          fi
+
+      - name: Package release archives
+        timeout-minutes: 10
+        run: |
+          ROM_DIR="flashtool/rom"
+
+          write_readme() {
+            local dir=$1
+            local run_cmd=$2
+              printf 'OpenStick Flash Tool %s\n\nSupported devices: Qualcomm Snapdragon 410 portable Wi-Fi devices.\n\nUsage:\n1. Place boot.img and system.img in the rom directory.\n2. Hold the device volume-down button.\n3. Connect the USB cable.\n4. %s\n5. Wait for the operation to finish.\n\nDo not disconnect the USB cable while flashing.\n\nFirmware: https://github.com/dagoujjj/410-wrt-build\n' \
+              "$VERSION" "$run_cmd" > "$dir/README.txt"
+          }
+
+          # Windows x64
+          mkdir -p dist/win_x64/rom
+          cp $ROM_DIR/*.bin $ROM_DIR/*.mbn $ROM_DIR/*.img dist/win_x64/rom/ 2>/dev/null || true
+          write_readme dist/win_x64 "Run flash_tool.exe"
+          cd dist && zip -r "OpenStickFlashTool_Windows_x64_${VERSION}.zip" win_x64/ && cd ..
+
+          # Windows x86
+          mkdir -p dist/win_x86/rom
+          cp $ROM_DIR/*.bin $ROM_DIR/*.mbn $ROM_DIR/*.img dist/win_x86/rom/ 2>/dev/null || true
+          write_readme dist/win_x86 "Run flash_tool.exe"
+          cd dist && zip -r "OpenStickFlashTool_Windows_x86_${VERSION}.zip" win_x86/ && cd ..
+
+          # Linux x64
+          mkdir -p dist/linux_x64/rom
+          cp $ROM_DIR/*.bin $ROM_DIR/*.mbn $ROM_DIR/*.img dist/linux_x64/rom/ 2>/dev/null || true
+          chmod +x dist/linux_x64/flash_tool
+          write_readme dist/linux_x64 "Run ./flash_tool"
+          cd dist && tar -czf "OpenStickFlashTool_Linux_x64_${VERSION}.tar.gz" linux_x64/ && cd ..
+
+          # Linux arm64 (optional when the static library is unavailable).
+          if [ -f dist/linux_arm64/flash_tool ]; then
+            mkdir -p dist/linux_arm64/rom
+            cp $ROM_DIR/*.bin $ROM_DIR/*.mbn $ROM_DIR/*.img dist/linux_arm64/rom/ 2>/dev/null || true
+            chmod +x dist/linux_arm64/flash_tool
+            write_readme dist/linux_arm64 "Run ./flash_tool"
+            cd dist && tar -czf "OpenStickFlashTool_Linux_arm64_${VERSION}.tar.gz" linux_arm64/ && cd ..
+          else
+            echo "The optional arm64 binary is unavailable; skipping its archive."
+          fi
+
+          echo "Archives created:"
+          ls -lh dist/*.zip dist/*.tar.gz
+
+      - name: Publish release
+        uses: ncipollo/release-action@v1.21.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag: flashtool-${{ env.VERSION }}-${{ github.run_number }}
+          name: "OpenStick Flash Tool ${{ env.VERSION }}"
+          body: |
+            ## OpenStick Flash Tool ${{ env.VERSION }}
+
+            ### No additional driver installation is required
+
+            ### Usage
+            1. Download and extract the archive for your operating system
+            2. Place `boot.img` and `system.img` in the `rom` directory
+            3. Hold the device volume-down button and connect USB
+            4. Run the flash tool
+            5. Wait for the operation to finish
+
+            ### Downloads
+            | Archive | Platform |
+            |------|---------|
+            | `OpenStickFlashTool_Windows_x64_*.zip` | Windows 10/11 amd64 (recommended) |
+            | `OpenStickFlashTool_Windows_x86_*.zip` | Windows 386 |
+            | `OpenStickFlashTool_Linux_x64_*.tar.gz` | Linux amd64 |
+            | `OpenStickFlashTool_Linux_arm64_*.tar.gz` | Linux arm64 |
+
+            ### Firmware
+            https://github.com/dagoujjj/410-wrt-build
+          artifacts: "dist/*.zip,dist/*.tar.gz"
+          allowUpdates: true
+          draft: false
+          prerelease: false

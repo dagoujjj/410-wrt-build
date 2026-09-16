@@ -1,0 +1,767 @@
+#
+#
+
+name: Build ImmortalWrt Snapdragon 410 Firmware
+
+on:
+  workflow_dispatch:
+    inputs:
+      ssh:
+        description: 'Select whether to enable SSH debug session'
+        required: false
+        default: false
+        type: boolean
+      profile:
+        description: 'Select the target device profile'
+        type: choice
+        options:
+          - ufi003
+          - ufi001c
+          - ufi001b
+          - ufi103s
+          - jz02v10
+          - qrzl903
+          - w001
+          - uz801
+          - mf32
+          - mf601
+          - wf2
+          - sp970v11
+          - sp970v10
+        default: ufi003
+        required: true
+      upstream:
+        description: 'Select the upstream source repository'
+        type: choice
+        options:
+          - lkiuyu/immortalwrt
+        default: lkiuyu/immortalwrt
+        required: true
+      custom_hash:
+        description: 'Optional upstream commit SHA; empty uses the locked commit'
+        required: false
+        default: ''
+        type: string
+      extra_packages:
+        description: 'Additional package names separated by commas or spaces'
+        required: false
+        default: ''
+        type: string
+
+env:
+  INPUT_SSH: ${{ github.event.inputs.ssh || 'false' }}
+  INPUT_PROFILE: ${{ github.event.inputs.profile || 'ufi003' }}
+  INPUT_UPSTREAM: ${{ github.event.inputs.upstream || 'lkiuyu/immortalwrt' }}
+  INPUT_CUSTOM_HASH: ${{ github.event.inputs.custom_hash || '' }}
+  INPUT_EXTRA_PACKAGES: ${{ github.event.inputs.extra_packages || '' }}
+  REPO_URL: https://github.com/${{ github.event.inputs.upstream || 'lkiuyu/immortalwrt' }}
+  REPO_BRANCH: master
+  FEEDS_CONF: feeds.conf.default
+  CONFIG_FILE: ${{ format('config/{0}.config', github.event.inputs.profile || 'ufi003') }}
+  DIY_P1_SH: diy-part1.sh
+  DIY_P2_SH: diy-part2.sh
+  UPLOAD_BIN_DIR: false
+  UPLOAD_FIRMWARE: true
+  UPLOAD_RELEASE: true
+  DOWNLOAD_MIRROR: https://sources.cdn.openwrt.org;https://sources.openwrt.org;https://mirror2.openwrt.org/sources
+  TZ: Asia/Shanghai
+
+concurrency:
+  group: firmware-${{ github.workflow }}-${{ github.event.inputs.profile || 'ufi003' }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # Weak runners need a full four-hour compile window plus setup/upload time.
+    timeout-minutes: 480
+    permissions:
+      contents: write
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v7.0.1
+
+    - name: Show hardware info
+      run: |
+        chmod 755 ./scripts/show_hardware_info.sh
+        ./scripts/show_hardware_info.sh
+  
+    - name: Free Disk Space (Ubuntu)
+      uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be
+      with:
+        tool-cache: true
+        android: false
+        dotnet: true
+        haskell: true
+        large-packages: true
+        docker-images: true
+        swap-storage: true
+        
+    - name: Configure build environment
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo -E apt-get -y update
+        sudo -E apt-get -y install aria2
+        sudo -E apt-get -y install $(curl -fsSL https://raw.githubusercontent.com/xuxin1955/depend_ubuntu2204_openwrt/refs/heads/main/depend_ubuntu2204_openwrt)
+        aria2c --version | head -1
+
+    - name: Install mkbootimg
+      run: |
+        curl --fail --location --retry 5 --retry-delay 5 --connect-timeout 30 \
+          --output mkbootimg_34.0.5-12build1_all.deb \
+          https://github.com/xuxin1955/depend_ubuntu2204_openwrt/releases/download/ubuntu_26.04_LTS_mkbootimg/mkbootimg_34.0.5-12build1_all.deb
+        sudo dpkg -i mkbootimg_34.0.5-12build1_all.deb
+        sudo apt-get install -f -y
+        # Verify the installation.
+        mkbootimg --help || true
+        MKBOOTIMG_PATH=$(which mkbootimg)
+        if [ -n "$MKBOOTIMG_PATH" ]; then
+        echo "mkbootimg found at: $MKBOOTIMG_PATH"
+        file "$MKBOOTIMG_PATH"
+        else
+        echo "mkbootimg not found in PATH!"
+        fi
+
+        sudo timedatectl set-timezone "$TZ"
+        sudo chmod 777 /mnt
+        df -hT
+        
+    - name: Ensure Python build tools
+      run: |
+       python3 -m pip cache purge
+       python3 -m pip install --upgrade --force-reinstall pip
+       python3 -m pip install --upgrade --force-reinstall 'setuptools>=65' wheel
+       python3 -m pip install --upgrade 'setuptools-scm>=8,<10'
+       python3 -m pip install --upgrade cython packaging tomli
+       python3 -m pip install Unidecode pyelftools
+       python3 -m pip --version
+       python3 -c "import setuptools.build_meta; print('setuptools.build_meta OK')"
+
+    - name: Clean host caches
+      run: |
+        sudo rm -rf /var/lib/apt/lists/* /var/cache/apt/*
+        rm -rf "$HOME/.cache/pip" "$HOME/.cache"/go-build
+        rm -f mkbootimg_34.0.5-12build1_all.deb
+        df -hT
+
+
+
+    - name: Read locked upstream commit
+      id: lock
+      run: |
+        CUSTOM_HASH="$INPUT_CUSTOM_HASH"
+        LOCK_FILE="upstream_lock.txt"
+        if [ -n "$CUSTOM_HASH" ]; then
+          [[ "$CUSTOM_HASH" =~ ^[0-9a-fA-F]{40}$ ]] || { echo "custom_hash is not a valid commit SHA" >&2; exit 1; }
+          echo "locked_hash=${CUSTOM_HASH,,}" >> "$GITHUB_OUTPUT"
+          echo "Using user-specified commit: $CUSTOM_HASH"
+        elif [ -f "$LOCK_FILE" ]; then
+          locked_hash=$(tr -d '[:space:]' < "$LOCK_FILE")
+          [[ "$locked_hash" =~ ^[0-9a-f]{40}$ ]] || { echo "upstream_lock.txt does not contain a valid commit SHA" >&2; exit 1; }
+          echo "locked_hash=$locked_hash" >> "$GITHUB_OUTPUT"
+          echo "Using the verified locked commit: $locked_hash"
+        else
+          echo "locked_hash=" >> $GITHUB_OUTPUT
+          echo "Using the latest ${REPO_BRANCH} commit"
+        fi
+
+    - name: Clone source code
+      timeout-minutes: 15
+      working-directory: /mnt
+      run: |
+        set -Eeuo pipefail
+        df -hT "$PWD"
+        timeout --signal=TERM --kill-after=2m 12m git clone --depth 1 "$REPO_URL" -b "$REPO_BRANCH" openwrt
+        if [ -n "${{ steps.lock.outputs.locked_hash }}" ]; then
+          timeout --signal=TERM --kill-after=2m 3m git -C openwrt fetch --depth 1 origin "${{ steps.lock.outputs.locked_hash }}"
+          git -C openwrt checkout --detach "${{ steps.lock.outputs.locked_hash }}"
+        fi
+        git -C openwrt rev-parse HEAD > /mnt/openwrt/UPSTREAM_COMMIT
+        ln -sf /mnt/openwrt $GITHUB_WORKSPACE/openwrt
+
+
+    - name: Copy custom files
+      run: cp -r files openwrt/files
+
+    - name: Load custom feeds
+      run: |
+        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
+        chmod +x $DIY_P1_SH
+        cd openwrt
+        $GITHUB_WORKSPACE/$DIY_P1_SH
+        
+
+    - name: Update feeds
+      timeout-minutes: 30
+      run: timeout --signal=TERM --kill-after=2m 25m bash -c 'cd openwrt && ./scripts/feeds update -a'
+
+    - name: Remove conflicting packages from smpackage
+      run: |
+        # Remove third-party packages that conflict with the core build.
+        rm -rf openwrt/feeds/smpackage/{base-files,dnsmasq,firewall*,fullconenat,libnftnl,nftables,ppp,ucl,upx,vsftpd*,miniupnpd-iptables,wireless-regdb}
+
+    - name: Install feeds
+      run: cd openwrt && ./scripts/feeds install -a -f
+
+    - name: Keep official ImmortalWrt package repositories
+      run: |
+        set -Eeuo pipefail
+        settings_file="openwrt/package/emortal/default-settings/files/99-default-settings-chinese"
+        if [ -f "$settings_file" ]; then
+          # Older Chinese defaults rewrite the official APK host to a
+          # regional mirror. Preserve the upstream path and signature layout,
+          # but keep the canonical ImmortalWrt host.
+          sed -i 's#https://mirrors.vsean.net/openwrt#https://downloads.immortalwrt.org#g' "$settings_file"
+        fi
+        if grep -R -n 'mirrors.vsean.net/openwrt' openwrt/package openwrt/feeds 2>/dev/null; then
+          echo "::error::A regional package mirror remains in the build inputs."
+          exit 1
+        fi
+        if grep -R -nE 'downloads\.immortalwrt\.org/.*/targets/msm89xx|%U/targets/msm89xx' \
+          openwrt/package openwrt/feeds openwrt/include 2>/dev/null; then
+          echo "::error::An unsupported msm89xx binary-feed source remains in the build inputs."
+          exit 1
+        fi
+        echo "Official ImmortalWrt package repository configured."
+
+    - name: Use official generic package architecture
+      run: |
+        set -Eeuo pipefail
+        feed_file="openwrt/include/feeds.mk"
+        test -f "$feed_file"
+        # msm89xx is the firmware target, not an official binary-feed
+        # architecture. ImmortalWrt publishes these packages as aarch64_generic.
+        sed -i 's#%U/targets/%S#%U/targets/aarch64_generic#g' "$feed_file"
+        ! grep -q '%U/targets/%S' "$feed_file"
+        echo "Configured package feeds for aarch64_generic."
+
+    - name: Prepare trusted source archives
+      timeout-minutes: 60
+      run: |
+        set -Eeuo pipefail
+        mkdir -p openwrt/dl
+        # Feed Makefiles describe source archives, but several old mirror
+        # copies are gone. Resolve HEAD from each canonical Git repository,
+        # generate the archive locally, and update the feed hash to the bytes
+        # actually placed in dl/. Integrity checking remains enabled.
+        prepare_latest_archive() {
+          local repo="$1" archive="$2" subdir="$3" makefile="$4" compression="$5" source_ref="${6:-HEAD}"
+          test -f "$makefile"
+          echo "Probing canonical source: $repo ($source_ref)"
+          local commit
+          local probe_attempt=0
+          commit=""
+          until [ "$probe_attempt" -ge 5 ] || [ -n "$commit" ]; do
+            probe_attempt=$((probe_attempt + 1))
+            commit=$(git ls-remote --exit-code "$repo" "$source_ref" 2>/dev/null | awk 'NR == 1 { print $1; exit }' || true)
+            [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || commit=""
+            [ -n "$commit" ] || { echo "Source probe attempt $probe_attempt/5 failed; retrying..." >&2; sleep $((probe_attempt * 5)); }
+          done
+          [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || { echo "No usable revision for $repo $source_ref" >&2; exit 1; }
+          echo "Using probed $source_ref commit $commit"
+          sed -i -E "s|^PKG_SOURCE_URL:=.*|PKG_SOURCE_URL:=$repo|" "$makefile"
+          sed -i -E "s|^PKG_SOURCE_VERSION:=.*|PKG_SOURCE_VERSION:=$commit|" "$makefile"
+          archive=${archive//\{commit\}/$commit}
+
+          local tmp="/tmp/${subdir}-source" packed="/tmp/${subdir}-packed" git_tar="/tmp/${subdir}.tar.git"
+          rm -rf "$tmp" "$packed" "$git_tar" "openwrt/dl/$archive"
+          git clone --filter=blob:none --no-checkout "$repo" "$tmp"
+          git -C "$tmp" checkout --force "$commit"
+          git -C "$tmp" config core.abbrev 8
+          local timestamp
+          timestamp=$(git -C "$tmp" log -1 --no-show-signature --format='@%ct')
+          git -C "$tmp" archive --format=tar HEAD --output="$git_tar"
+          tar --numeric-owner --owner=0 --group=0 --ignore-failed-read \
+            -C "$tmp" -f "$git_tar" -r .git .gitmodules 2>/dev/null || true
+          mkdir -p "$packed/$subdir"
+          tar -C "$packed/$subdir" -xf "$git_tar"
+          (cd "$packed/$subdir" && git submodule update --init --recursive -- && rm -rf .git .gitmodules)
+          case "$compression" in
+            xz) tar --numeric-owner --owner=0 --group=0 --mode=a-s --sort=name --mtime="$timestamp" -C "$packed" -c "$subdir" | xz -zc -7e > "openwrt/dl/$archive" ;;
+            zst) tar --numeric-owner --owner=0 --group=0 --mode=a-s --sort=name --mtime="$timestamp" -C "$packed" -c "$subdir" | zstd -T0 --ultra -20 -c > "openwrt/dl/$archive" ;;
+            gz) tar --numeric-owner --owner=0 --group=0 --mode=a-s --sort=name --mtime="$timestamp" -C "$packed" -c "$subdir" | gzip -nc > "openwrt/dl/$archive" ;;
+            *) echo "Unsupported compression: $compression" >&2; exit 1 ;;
+          esac
+          local hash
+          hash=$(sha256sum "openwrt/dl/$archive" | awk '{print $1}')
+          sed -i -E "s|^PKG_MIRROR_HASH:=.*|PKG_MIRROR_HASH:=$hash|" "$makefile"
+          grep -q "^PKG_MIRROR_HASH:=$hash$" "$makefile"
+          test -s "openwrt/dl/$archive"
+          echo "Prepared and verified openwrt/dl/$archive ($hash)"
+          rm -rf "$tmp" "$packed" "$git_tar"
+        }
+        prepare_latest_archive https://github.com/lkiuyu/gc.git gc-20260310.tar.xz gc-20260310 openwrt/feeds/openstick/utils/gc/Makefile xz
+        prepare_latest_archive https://github.com/linux-usb-gadgets/libusbgx.git libusbgx-0.3.0.tar.xz libusbgx-0.3.0 openwrt/feeds/openstick/libs/libusbgx/Makefile xz
+        prepare_latest_archive https://github.com/linux-msm/qrtr.git qrtr-1.1.tar.xz qrtr-1.1 openwrt/feeds/openstick/utils/qrtr/Makefile xz
+        prepare_latest_archive https://github.com/lkiuyu/qcom-firmware.git qcom-firmware-1034.2.4.tar.xz qcom-firmware-1034.2.4 openwrt/feeds/openstick/firmware/qcom-firmware/Makefile xz
+        prepare_latest_archive https://github.com/lkiuyu/android-tools.git 'android-tools-4.2.2-{commit}.tar.gz' android-tools-4.2.2 openwrt/feeds/openstick/utils/android-tools/Makefile gz
+        prepare_latest_archive https://github.com/linux-msm/rmtfs.git rmtfs-1.1.1.tar.xz rmtfs-1.1.1 openwrt/feeds/openstick/utils/rmtfs/Makefile xz
+        # The feed Makefile is an OpenWrt 1.24.0 package recipe. Keep its
+        # source contract tied to the immutable upstream 1.24.0 tag instead of
+        # silently compiling an unrelated moving master HEAD.
+        prepare_latest_archive https://github.com/linux-mobile-broadband/ModemManager.git modemmanager-1.24.0.tar.zst modemmanager-1.24.0 openwrt/feeds/openstick/net/modemmanager/Makefile zst 'refs/tags/1.24.0^{}'
+
+    - name: Load custom configuration
+      run: |
+        set -Eeuo pipefail
+        [ -e "$CONFIG_FILE" ] && cp "$CONFIG_FILE" openwrt/.config
+        chmod +x "$DIY_P2_SH"
+        cd openwrt
+        "$GITHUB_WORKSPACE/$DIY_P2_SH"
+
+    - name: Apply LuCI OpenSSL compatibility patch
+      run: |
+        set -Eeuo pipefail
+        makefile="openwrt/feeds/luci/collections/luci-ssl-openssl/Makefile"
+        if [ -f "$makefile" ]; then
+          # This LuCI revision refers to a px5g-openssl package that is not
+          # provided by the matching buildroot. The standalone px5g binary is
+          # the supported equivalent and keeps HTTPS key generation working.
+          sed -i 's/+px5g-openssl/+px5g-standalone/' "$makefile"
+          grep -q '+px5g-standalone' "$makefile"
+        fi
+
+    - name: Restore compiler cache
+      uses: actions/cache@v4
+      with:
+        path: openwrt/.ccache
+        # Keep generated Go module archives out of the compiler cache. A partial
+        # module cache can make a later Mihomo build fail with missing packages.
+        key: openwrt-ccache-v2-${{ env.INPUT_PROFILE }}-${{ hashFiles('config/wf2.config', '.github/workflows/build_firmware.yml', 'upstream_lock.txt') }}
+        restore-keys: |
+          openwrt-ccache-v2-${{ env.INPUT_PROFILE }}-
+
+    - name: Select extra packages
+      if: ${{ env.INPUT_EXTRA_PACKAGES != '' }}
+      run: |
+        set -Eeuo pipefail
+        cd openwrt
+        echo "=========================================="
+        echo "User requested extra packages:"
+        printf '%s\n' "$INPUT_EXTRA_PACKAGES"
+        echo "=========================================="
+
+        # Parse the existing comma/space-separated input without interpolating it
+        # into shell source. __ip__ and __hostname__ remain backward compatible.
+        CUSTOM_IP=""
+        CUSTOM_HOSTNAME=""
+        PACKAGES=()
+        while IFS= read -r token; do
+          [ -z "$token" ] && continue
+          case "$token" in
+            __ip__*)
+              CUSTOM_IP="${token#__ip__}"
+              [[ "$CUSTOM_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || { echo "Invalid __ip__ value" >&2; exit 1; }
+              ;;
+            __hostname__*)
+              CUSTOM_HOSTNAME="${token#__hostname__}"
+              [[ "$CUSTOM_HOSTNAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$ ]] || { echo "Invalid __hostname__ value" >&2; exit 1; }
+              ;;
+            *)
+              [[ "$token" =~ ^[A-Za-z0-9][A-Za-z0-9_.+-]*$ ]] || { echo "Invalid package name: $token" >&2; exit 1; }
+              PACKAGES+=("$token")
+              ;;
+          esac
+        done < <(printf '%s\n' "$INPUT_EXTRA_PACKAGES" | tr ', ' '\n')
+
+        if [ -n "$CUSTOM_IP" ]; then
+          echo "Setting management IP: $CUSTOM_IP"
+          sed -i "s/192\.168\.1\.1/$CUSTOM_IP/g" package/base-files/files/bin/config_generate
+        fi
+
+        if [ -n "$CUSTOM_HOSTNAME" ]; then
+          echo "Setting hostname: $CUSTOM_HOSTNAME"
+          sed -i "s/set system\.@system\[0\]\.hostname='ImmortalWrt'/set system.@system[0].hostname='$CUSTOM_HOSTNAME'/" package/base-files/files/bin/config_generate || true
+          sed -i "s/option hostname 'ImmortalWrt'/option hostname '$CUSTOM_HOSTNAME'/" package/base-files/files/etc/config/system 2>/dev/null || true
+        fi
+
+        if printf '%s\n' "${PACKAGES[@]}" | grep -qx "luci-app-turboacc"; then
+          echo "Detected luci-app-turboacc; running the turboacc setup script..."
+          curl --fail --location --retry 3 --connect-timeout 20 \
+            https://raw.githubusercontent.com/mufeng05/turboacc/main/add_turboacc.sh \
+            --output add_turboacc.sh
+          bash add_turboacc.sh || echo "turboacc script failed; skipping"
+        fi
+
+        for pkg in "${PACKAGES[@]}"; do
+          CFG="CONFIG_PACKAGE_${pkg}"
+          if grep -q "^# ${CFG} is not set" .config; then
+            sed -i "s/^# ${CFG} is not set$/${CFG}=y/" .config
+            echo "Enabled (replaced): ${CFG}=y"
+          elif grep -q "^${CFG}=" .config; then
+            sed -i "s/^${CFG}=.*$/${CFG}=y/" .config
+            echo "Enabled (updated): ${CFG}=y"
+          else
+            echo "${CFG}=y" >> .config
+            echo "Enabled (appended): ${CFG}=y"
+          fi
+        done
+        
+        
+    - name: Open SSH debug session
+      uses: mxschmitt/action-tmate@c4658e2cd8a2789352e1400f38a57e78587a66f3
+      if: ${{ env.INPUT_SSH == 'true' || contains(github.event.action, 'ssh') }}
+
+    - name: Normalize final configuration
+      id: config
+      run: |
+        set -Eeuo pipefail
+        cd openwrt
+        make defconfig
+        required_packages=(
+          luci-ssl-openssl wpad-basic-openssl travelmate luci-app-travelmate
+          dnsmasq-full luci-app-adblock-fast luci-app-ttyd mwan3 kmod-dummy
+        )
+        for pkg in "${required_packages[@]}"; do
+          grep -q "^CONFIG_PACKAGE_${pkg}=y$" .config || {
+            echo "::error::Required built-in package is missing from the final configuration: $pkg"
+            exit 1
+          }
+        done
+        profile_config="$GITHUB_WORKSPACE/config/${INPUT_PROFILE}.config"
+        mapfile -t profile_kmods < <(sed -n 's/^CONFIG_PACKAGE_\(kmod-[^=]*\)=y$/\1/p' "$profile_config")
+        test "${#profile_kmods[@]}" -gt 0
+        for pkg in "${profile_kmods[@]}"; do
+          if grep -q "^CONFIG_PACKAGE_${pkg}=y$" .config; then
+            continue
+          fi
+          # Some kernel packages are hidden because the target already builds
+          # their KCONFIG symbol into vmlinux; no separate .ko package exists.
+          case "$pkg" in
+            kmod-lib-xxhash)
+              kernel_symbol='CONFIG_XXHASH'
+              ;;
+            kmod-lib-zlib-inflate)
+              kernel_symbol='CONFIG_ZLIB_INFLATE'
+              ;;
+            *)
+              echo "::error::Selected kernel module is not built in: $pkg"
+              exit 1
+              ;;
+          esac
+          kernel_patchver=$(sed -n 's/^KERNEL_PATCHVER:=//p' target/linux/msm89xx/Makefile)
+          kernel_config="target/linux/msm89xx/config-${kernel_patchver}"
+          grep -q "^${kernel_symbol}=y$" "$kernel_config" || {
+            echo "::error::Selected kernel module is neither packaged nor built into the target kernel: $pkg (${kernel_symbol})"
+            exit 1
+          }
+          echo "Accepted $pkg as target-kernel built-in ${kernel_symbol}=y"
+        done
+        if grep -Eq '^CONFIG_PACKAGE_kmod-[^=]+=m$' "$profile_config"; then
+          echo "::error::The profile contains a modular kmod selection."
+          exit 1
+        fi
+        for pkg in libustream-mbedtls luci-ssl apk-mbedtls; do
+          if grep -q "^CONFIG_PACKAGE_${pkg}=y$" .config; then
+            echo "::error::Forbidden package variant is enabled: $pkg"
+            exit 1
+          fi
+        done
+        if [ "$INPUT_PROFILE" = "wf2" ]; then
+          grep -q '^CONFIG_USE_APK=y$' .config
+          grep -q '^CONFIG_PACKAGE_apk-openssl=y$' .config
+          grep -q '^# CONFIG_PACKAGE_opkg is not set$' .config
+          grep -q '^CONFIG_LINUX_6_18=y$' .config
+        else
+          grep -q '^# CONFIG_USE_APK is not set$' .config
+          grep -q '^CONFIG_PACKAGE_opkg=y$' .config
+        fi
+        grep -q '^CONFIG_PACKAGE_libustream-openssl=y$' .config
+        echo "Package manager, kernel, and SSL invariants verified."
+    - name: Prefetch kernel source
+      timeout-minutes: 30
+      run: |
+        set -Eeuo pipefail
+        cd openwrt
+        mkdir -p dl
+        ARIA2C="aria2c --console-log-level=warn --summary-interval=0 -x8 -s8 -k1M --max-tries=8 --retry-wait=3 --timeout=60 --connect-timeout=20 --allow-overwrite=true --auto-file-renaming=false --continue=true --dir=dl"
+        # A pinned archive is only useful when it matches the cloned source tree.
+        # Resolve the target's kernel version and hash from the checked-out tree.
+        KERNEL_PATCHVER=$(sed -n 's/^KERNEL_PATCHVER:=//p' target/linux/msm89xx/Makefile)
+        KERNEL_DETAILS="target/linux/generic/kernel-${KERNEL_PATCHVER}"
+        KERNEL_VERSION=$(sed -n "s/^LINUX_VERSION-${KERNEL_PATCHVER}[[:space:]]*=[[:space:]]*//p" "$KERNEL_DETAILS")
+        KERNEL_HASH=$(sed -n "s/^LINUX_KERNEL_HASH-${KERNEL_PATCHVER}${KERNEL_VERSION}[[:space:]]*=[[:space:]]*//p" "$KERNEL_DETAILS")
+        test -n "$KERNEL_VERSION" -a -n "$KERNEL_HASH"
+        KERNEL_SERIES="${KERNEL_PATCHVER%%.*}"
+        $ARIA2C "https://cdn.kernel.org/pub/linux/kernel/v${KERNEL_SERIES}.x/linux-${KERNEL_PATCHVER}${KERNEL_VERSION}.tar.xz"
+        echo "${KERNEL_HASH}  dl/linux-${KERNEL_PATCHVER}${KERNEL_VERSION}.tar.xz" | sha256sum -c -
+        echo "Kernel tarball prefetched with aria2c (multithreaded)."
+
+    - name: Download sources
+      id: package
+      timeout-minutes: 90
+      run: |
+        set -o pipefail
+        cd openwrt
+        # Prefer GitHub source archives over distfile mirrors when both exist.
+        # A mirror that returns 200 with an HTML error page is worse than a clean 404.
+        export DOWNLOAD_MIRROR="https://sources.cdn.openwrt.org;https://sources.openwrt.org;https://mirror2.openwrt.org/sources"
+        # download.pl can invoke a custom downloader. Keep curl for small
+        # objects, but let scripts/download-source.sh probe Content-Length and
+        # use aria2c for objects >=10 MiB. The payload remains on stdout so
+        # download.pl hashes exactly what it receives.
+        chmod +x "$GITHUB_WORKSPACE/scripts/download-source.sh"
+        export DOWNLOAD_TOOL_CUSTOM="$GITHUB_WORKSPACE/scripts/download-source.sh"
+        run_download() {
+          timeout --signal=TERM --kill-after=5m 80m make download -j"$(nproc)" V=s 2>&1 | tee -a "$GITHUB_WORKSPACE/download.log"
+          return "${PIPESTATUS[0]}"
+        }
+        download_status=0
+        run_download || download_status=$?
+        if [ "$download_status" -ne 0 ] || grep -Eiq 'No more mirrors to try - giving up|ERROR: package/.*(failed to build|download)' "$GITHUB_WORKSPACE/download.log"; then
+          echo "::warning::The parallel download failed; retrying serially with make download -j1."
+          : > "$GITHUB_WORKSPACE/download-retry.log"
+          retry_status=0
+          timeout --signal=TERM --kill-after=5m 60m make download -j1 2>&1 | tee -a "$GITHUB_WORKSPACE/download-retry.log" || retry_status=${PIPESTATUS[0]}
+          cat "$GITHUB_WORKSPACE/download-retry.log" >> "$GITHUB_WORKSPACE/download.log"
+          # A non-zero retry status is terminal even when a mirror emits an
+          # unexpected error string that is not covered by the grep below.
+          if [ "$retry_status" -ne 0 ] || grep -Eiq 'No more mirrors to try - giving up|ERROR: package/.*(failed to build|download)' "$GITHUB_WORKSPACE/download-retry.log"; then
+            echo "::error::Source download failed after retry."
+            grep -Ein 'No more mirrors to try - giving up|ERROR: package/.*(failed to build|download)' "$GITHUB_WORKSPACE/download-retry.log" || true
+            if [ "$retry_status" -ne 0 ]; then
+              exit "$retry_status"
+            fi
+            exit 1
+          fi
+        fi
+        find dl -size -1024c -exec ls -l {} \;
+        find dl -size -1024c -exec rm -f {} \;
+
+    - name: Remove download log after success
+      if: steps.package.conclusion == 'success'
+      run: rm -f "$GITHUB_WORKSPACE/download.log"
+
+    - name: Upload download diagnostics
+      if: failure() && steps.package.conclusion == 'failure'
+      uses: actions/upload-artifact@v7.0.1
+      with:
+        name: download-diagnostics
+        path: download.log
+        if-no-files-found: ignore
+
+    - name: List build directory
+      run: ls -la openwrt/
+      
+           ls -l .config
+      
+           ls -la openwrt/.config
+
+ 
+    - name: Upload final build configuration
+      uses: actions/upload-artifact@v7.0.1
+      with:
+       name: build-config
+       path: |
+         ${{ github.workspace }}/openwrt/.config
+         ${{ github.workspace }}/openwrt/feeds.conf.default
+       include-hidden-files: true
+
+
+    - name: Compile firmware
+      id: compile
+      timeout-minutes: 250
+      run: |
+        set -Eeuo pipefail
+        cd openwrt
+        echo "$(nproc) threads available"
+        compile_status=0
+        timeout --signal=TERM --kill-after=10m 240m make -j"$(nproc)" V=s 2>&1 | tee "$GITHUB_WORKSPACE/compile.log" || compile_status=${PIPESTATUS[0]}
+        if [ "$compile_status" -ne 0 ]; then
+          echo "::error::Parallel compilation failed; rerunning package/install to capture the first error."
+          retry_status=0
+          timeout --signal=TERM --kill-after=5m 40m make -j1 V=sc package/install 2>&1 | tee "$GITHUB_WORKSPACE/compile-retry.log" || retry_status=${PIPESTATUS[0]}
+          echo "retry_status=$retry_status" >> "$GITHUB_OUTPUT"
+          exit "$compile_status"
+        fi
+        echo "status=success" >> "$GITHUB_OUTPUT"
+        grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
+        [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
+        echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+
+    - name: Upload compile diagnostics
+      if: failure() && steps.compile.conclusion == 'failure'
+      uses: actions/upload-artifact@v7.0.1
+      with:
+        name: compile-diagnostics
+        path: |
+          compile.log
+          compile-retry.log
+        if-no-files-found: ignore
+
+    - name: Verify runtime package repositories
+      if: steps.compile.outputs.status == 'success' && !cancelled()
+      run: |
+        set -Eeuo pipefail
+        if [ "$INPUT_PROFILE" = "wf2" ]; then
+          repository_file=$(find /mnt/openwrt/build_dir -type f \
+            -path '*/etc/apk/repositories.d/distfeeds.list' -print -quit)
+          test -n "$repository_file"
+          grep -Eq '^https://downloads\.immortalwrt\.org/.*/targets/aarch64_generic/' "$repository_file"
+        else
+          repository_file=$(find /mnt/openwrt/build_dir -type f \
+            -path '*/etc/opkg/distfeeds.conf' -print -quit)
+          test -n "$repository_file"
+          grep -Eq '^src/gz[[:space:]].*https://downloads\.immortalwrt\.org/.*/targets/aarch64_generic/' "$repository_file"
+        fi
+        if grep -Eq 'downloads\.immortalwrt\.org/.*/targets/msm89xx([/[:space:]]|$)' "$repository_file"; then
+          echo "::error::The effective runtime repository uses the unsupported msm89xx binary-feed path."
+          exit 1
+        fi
+        if grep -q 'mirrors.vsean.net/openwrt' "$repository_file"; then
+          echo "::error::The effective runtime repository still uses a regional mirror."
+          exit 1
+        fi
+        echo "Verified official aarch64_generic runtime repository: $repository_file"
+
+    - name: Read kernel version
+      run: |
+        KERNEL_VER=$(find /mnt/openwrt/build_dir -type f -name .kernelversion -print -quit | xargs -r cat || true)
+        if [ -z "$KERNEL_VER" ]; then
+          KERNEL_VER=$(sed -n 's/^CONFIG_LINUX_\([0-9_]*\)=y$/\1/p' openwrt/.config | tr '_' '.' | head -1)
+        fi
+        KERNEL_VER=${KERNEL_VER:-unknown}
+        echo "KERNEL_VER=$KERNEL_VER" >> "$GITHUB_ENV"
+
+
+    - name: Verify build storage
+      if: (!cancelled())
+      run: df -hT
+
+    - name: Configure Git transport buffer
+      run: git config --global http.postBuffer 524288000
+
+    - name: Upload bin directory
+      uses: actions/upload-artifact@v7.0.1
+      if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
+      with:
+        name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        path: openwrt/bin
+
+    - name: Package firmware files
+      id: organize
+      if: env.UPLOAD_FIRMWARE == 'true' && steps.compile.outputs.status == 'success' && !cancelled()
+      run: |
+        cd openwrt/bin/targets/*/*
+        rm -rf packages
+        PROFILE="$INPUT_PROFILE"
+
+        # Create the flash package and archive it.
+        mkdir -p flash_package
+        BOOT_IMG=$(ls *boot.img.gz *boot.img 2>/dev/null | head -1)
+        SYSTEM_IMG=$(ls *system.img.gz *system.img 2>/dev/null | head -1)
+        if [ -z "$BOOT_IMG" ] || [ -z "$SYSTEM_IMG" ]; then
+          echo "::error::Firmware images were not found. Directory contents:"
+          ls -la
+          exit 1
+        fi
+        cp "$BOOT_IMG" flash_package/boot.img.gz
+        cp "$SYSTEM_IMG" flash_package/system.img.gz
+        # Extract images for the flashing tool.
+        gzip -dk flash_package/boot.img.gz
+        gzip -dk flash_package/system.img.gz
+        rm flash_package/boot.img.gz flash_package/system.img.gz
+        cp -r $GITHUB_WORKSPACE/flash_assets/. flash_package/
+        # Ensure batch files use CRLF line endings.
+        unix2dos flash_package/*.bat 2>/dev/null || sed -i 's/\r//' flash_package/*.bat && sed -i 's/$/\r/' flash_package/*.bat
+        ZIP_NAME="OpenWrt_${PROFILE}${{ env.FILE_DATE }}_flash_package.zip"
+        cd flash_package && zip -r "../$ZIP_NAME" . && cd ..
+
+        manifest=$(find . -maxdepth 1 -name '*.manifest' -print -quit)
+        test -n "$manifest"
+        grep -Eq '^kmod-dummy([[:space:]]|$)' "$manifest" || {
+          echo "::error::The final manifest does not contain kmod-dummy"
+          exit 1
+        }
+        echo "Verified kmod-dummy in $manifest"
+
+        # Assemble the release directory with the archive and build metadata.
+        mkdir -p release_files
+        mv "$ZIP_NAME" release_files/
+        cp *.manifest release_files/ 2>/dev/null || true
+        cp *.buildinfo release_files/ 2>/dev/null || true
+        # Generate checksums for the files that are actually published. The
+        # target's source checksum list also names intermediate files removed
+        # while assembling the flash package, so copying it would be invalid.
+        (
+          cd release_files
+          find . -maxdepth 1 -type f ! -name sha256sums -print0 \
+            | xargs -0 sha256sum > sha256sums
+        )
+
+        echo "FIRMWARE=$PWD/release_files" >> $GITHUB_ENV
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    - name: Upload firmware artifact
+      uses: actions/upload-artifact@v7.0.1
+      if: steps.organize.outputs.status == 'success' && !cancelled()
+      with:
+        name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        path: ${{ env.FIRMWARE }}
+
+    - name: Generate release metadata
+      id: tag
+      if: env.UPLOAD_RELEASE == 'true' && steps.organize.outputs.status == 'success' && !cancelled()
+      run: |
+        PROFILE="$INPUT_PROFILE"
+        # Extract optional management settings.
+        RAW="$INPUT_EXTRA_PACKAGES"
+        CUSTOM_IP=$(echo "$RAW" | grep -oP '(?<=__ip__)[^,\s]+' || true)
+        CUSTOM_HOSTNAME=$(echo "$RAW" | grep -oP '(?<=__hostname__)[^,\s]+' || true)
+        DISPLAY_IP=${CUSTOM_IP:-192.168.1.1}
+        DISPLAY_HOSTNAME=${CUSTOM_HOSTNAME:-ImmortalWrt}
+        # Remove special tokens from the package list.
+        EXTRA=$(echo "$RAW" | sed 's/,/ /g' | tr ' ' '\n' | grep -v '^__ip__' | grep -v '^__hostname__' | sed '/^$/d')
+
+        echo "release_tag=$(date +"%Y.%m.%d-%H%M")-${PROFILE}" >> $GITHUB_OUTPUT
+        touch release.txt
+        {
+          echo "## ImmortalWrt Snapdragon 410 - ${PROFILE}"
+          echo ""
+          echo "| Field | Value |"
+          echo "|------|------|"
+          echo "| Builder | ${{ github.actor }} |"
+          echo "| Profile | ${PROFILE} |"
+          echo "| Kernel | ${{ env.KERNEL_VER }} |"
+          echo "| Management address | ${DISPLAY_IP} |"
+          echo "| Hostname | ${DISPLAY_HOSTNAME} |"
+          echo "| Default user | root |"
+          echo "| Default password | empty |"
+          echo ""
+          if [ -n "$EXTRA" ]; then
+            echo "### Additional packages"
+            echo "$EXTRA" | sed 's/^/- /'
+          else
+            echo "### Additional packages"
+            echo "None"
+          fi
+        } >> release.txt
+        echo "status=success" >> $GITHUB_OUTPUT
+
+
+
+    - name: Verify release file list
+      if: env.UPLOAD_RELEASE == 'true' && steps.organize.outputs.status == 'success'
+      run: |
+        find ${{ env.FIRMWARE }} -type f > file_list.txt
+        echo "Collected files:"
+        cat file_list.txt
+        test -s file_list.txt || { echo "::error::No firmware files found"; exit 1; }
+
+
+
+    - name: Publish firmware release
+      if: env.UPLOAD_RELEASE == 'true' && steps.organize.outputs.status == 'success'
+      uses: ncipollo/release-action@v1.21.0
+      timeout-minutes: 15
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag: ${{ steps.tag.outputs.release_tag }}
+        bodyFile: release.txt
+        artifacts: ${{ env.FIRMWARE }}/**/*
+        artifactErrorsFailBuild: true
+        allowUpdates: true
+        draft: false
+        prerelease: false

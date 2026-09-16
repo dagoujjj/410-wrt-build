@@ -82,7 +82,7 @@ const I18N = {
     err_http: "❌ 验证失败（HTTP ",
     err_net: "❌ 网络错误，请检查网络连接",
     building: "⏳ 正在触发编译...",
-    ok_built: "✅ 编译已触发！预计 1.5~2 小时完成。<br>👉 <a href=\"{url}\" target=\"_blank\">点此查看编译进度 ↗</a><br><span style='color:var(--text-muted)'>编译完成后在仓库 Releases 页面下载固件。如果编译失败，可在 Actions 日志里查看报错原因，常见原因：包名不存在、源码冲突。</span>",
+    ok_built: "✅ 编译已触发！预计 3~5 小时完成。<br>👉 <a href=\"{url}\" target=\"_blank\">点此查看编译进度 ↗</a><br><span style='color:var(--text-muted)'>编译完成后在仓库 Releases 页面下载固件。如果编译失败，可在 Actions 日志里查看报错原因，常见原因：包名不存在、源码冲突。</span>",
     err_no_wf: "未找到编译 Workflow，请确认仓库中存在编译 Action",
     err_wf_list: "获取 workflow 列表失败（HTTP ",
     err_branch: "触发失败，请检查仓库默认分支名称",
@@ -164,7 +164,7 @@ const I18N = {
     err_http: "❌ Verification failed (HTTP ",
     err_net: "❌ Network error, check your connection",
     building: "⏳ Triggering build...",
-    ok_built: "✅ Build triggered! Estimated 1.5~2 hours.<br>👉 <a href=\"{url}\" target=\"_blank\">View build progress ↗</a><br><span style='color:var(--text-muted)'>Download firmware from Releases when done. If build fails, check the Actions log. Common causes: invalid package name, source conflict.</span>",
+    ok_built: "✅ Build triggered! Estimated 3~5 hours.<br>👉 <a href=\"{url}\" target=\"_blank\">View build progress ↗</a><br><span style='color:var(--text-muted)'>Download firmware from Releases when done. If build fails, check the Actions log. Common causes: invalid package name, source conflict.</span>",
     err_no_wf: "Build Workflow not found, check your repository",
     err_wf_list: "Failed to list workflows (HTTP ",
     err_branch: "Trigger failed, check your default branch name",
@@ -830,7 +830,7 @@ async function triggerBuild() {
     if (!wfRes.ok) throw new Error(`${t("err_wf_list")}${wfRes.status}）`);
 
     const wfData   = await wfRes.json();
-    const workflow = wfData.workflows.find(w => w.path.includes("Build_高通410 imm"));
+    const workflow = wfData.workflows.find(w => w.path.includes("build_firmware.yml"));
     if (!workflow) throw new Error(t("err_no_wf"));
 
     const dispatch = async (ref) => fetch(

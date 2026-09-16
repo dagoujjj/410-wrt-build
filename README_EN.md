@@ -2,10 +2,11 @@
 
 Tired of finding a decent firmware? Software repos won't install, the version is too old, or someone else's build is bloated with plugins you don't need. Just compile your own OpenWrt flash package — a few simple steps, no local environment needed, no Linux knowledge required, no compilation know-how. Build it, one-click flash it, done.
 
-- Auto-pulls the latest ImmortalWrt source on every build
-- Pick exactly the plugins you want; the firmware is entirely up to you
+- Builds use a verified and locked ImmortalWrt commit; run the upstream verification workflow manually when updating it
+- Every device profile includes the requested packages and its selected `kmod-*` entries as built-ins, including `kmod-dummy`
+- Runtime package feeds use official ImmortalWrt URLs and the available `aarch64_generic` package architecture; the nonexistent `targets/msm89xx` path is rejected
+- Extra packages can be added through the workflow input; the default build has no extra packages
 - Base image is heavily optimized — no need to worry about random bugs
-- Supports custom packages: plugins, drivers, themes, Python, Perl, libs, and more
 
 ---
 
@@ -14,7 +15,7 @@ Tired of finding a decent firmware? Software repos won't install, the version is
 1. First, fork this repository to your own account
    ![Fork repo](img/0.png)
 
-2. Your repo → **Actions** → **Build_imm_Snapdragon_410_series** → **Run workflow** → Select your device model → Enter required plugin packages → Run workflow to start building
+2. Manually run **Build ImmortalWrt Snapdragon 410 Firmware** from Actions, choose the device profile, leave extra packages empty by default, and start the workflow.
    ![Build tutorial](img/1.png)
 
 3. Build takes approx. ⏱️ 1.5–2 hours; more plugins = longer build time
@@ -23,7 +24,7 @@ Tired of finding a decent firmware? Software repos won't install, the version is
 4. A green checkmark means a successful build. Your repo → **Releases** → Download the firmware package
    ![Download firmware](img/3.png)
 
-5. If your device is already running Linux or OpenWrt, follow the steps below to upgrade.
+5. If the device is already running Linux or OpenWrt, use `flash_openstick.bat` or another bundled fastboot procedure from the Release to update it. The current wf2 image rewrites the `boot` and `rootfs` partitions; it does not provide a target-validated LuCI dynamic-upgrade/sysupgrade path, so do not use a generic upgrade entry.
    ![Upgrade firmware](img/4.png)
 
    If your device has never been flashed with Linux or OpenWrt and is still on stock Android, follow the tutorial below. **Important: back up your partitions.**
@@ -33,6 +34,12 @@ Tired of finding a decent firmware? Software repos won't install, the version is
    ![Restore firmware](img/6.png)
 
 ---
+
+### Built-in Packages and Kernel Modules
+
+Every device profile includes these packages: `luci-ssl-openssl`, `wpad-basic-openssl`, `travelmate`, `luci-app-travelmate`, `dnsmasq-full`, `luci-app-adblock-fast`, `luci-app-ttyd`, and `mwan3`. Every `kmod-*` selected by a device profile is built with `=y`, and `kmod-dummy` is included in all profiles. Do not add these again through the extra-package input.
+
+The firmware target remains `msm89xx`, but the official binary feeds do not provide a `targets/msm89xx` path. Runtime feeds therefore use the available `aarch64_generic` package architecture.
 
 ### Recommended Plugin Configurations (copy & paste)
 
@@ -68,21 +75,21 @@ Tired of finding a decent firmware? Software repos won't install, the version is
 | Path                   | Description                                                                                   |
 |------------------------|-----------------------------------------------------------------------------------------------|
 | `config/`              | Build config files for each device model (e.g. `ufi003.config`)                               |
-| `files/`               | Files overlaid into the firmware image — system configs. [See this repo for custom homepage guide](https://github.com/x7780/suishen-wifi) |
+| `files/`               | System configuration files overlaid into the firmware image |
 | `img/`                 | Tutorial screenshots used in the README                                                       |
 | `scripts/`             | Helper scripts executed during the build                                                      |
 | `工具与脚本/`          | Flashing tools and helper scripts collection: 9008 driver, baseband, full flashing scripts, etc. |
-| `刷机脚本/`            | Integrated into the one-click flash package after a successful build                          |
+| `flash_assets/`            | Low-level files and patch scripts included in the generated flash package                 |
 | `diy-part1.sh`         | Phase 1 custom script — runs after fetching source (add repos, apply patches, etc.)           |
 | `diy-part2.sh`         | Phase 2 custom script — runs after default config is generated (tweak config, add files, etc.)|
-| `upstream_history.txt` | Historical upstream hash log — use a past hash if the latest won't compile                    |
-| `upstream_lock.txt`    | Periodically updated lock of a known-good upstream hash to avoid upstream breakage             |
+| `verify_upstream.yml`     | Manually verifies the upstream source and updates the lock; does not build firmware |
+| `upstream_lock.txt`    | Manually verified upstream commit used for reproducible builds                                |
 | `极简的包名.txt`       | Quick-reference list of common plugin package names (backup, not essential)                   |
 | `.config`              | Default build config, defines global build options                                            |
 
 ---
 
-### Built-in Default Plugins (3 total) — Do NOT re-add these in your build
+### Built-in Default Plugins — Do NOT re-add these in your build
 
 | # | Plugin                   | Description        | Menu Location      |
 |---|--------------------------|--------------------|--------------------|
@@ -91,6 +98,8 @@ Tired of finding a decent firmware? Software repos won't install, the version is
 | 3 | luci-app-firewallr       | Firewall           | System → Firewall  |
 
 ### Built-in Kernel Driver Modules — Do NOT add duplicates
+
+All `kmod-*` entries selected by each device profile are built into that profile, and `kmod-dummy` is included in every profile.
 
 | #  | Module                          | Description                 | Location       |
 |----|---------------------------------|-----------------------------|----------------|
@@ -126,7 +135,7 @@ Tired of finding a decent firmware? Software repos won't install, the version is
 | # | URL                               | Description                                                                         | How to Use                               |
 |---|-----------------------------------|-------------------------------------------------------------------------------------|------------------------------------------|
 | 1 | https://github.com/3899/SimAdmin  | Excellent SIM card management tool (actively updated by the author)                 | LuCI → Startup → Local Startup Script    |
-| 2 | https://picoclaw.io/              | Lightweight proxy — download the Linux ARM64 (arm64) build and extract onto device  | LuCI → Startup → Local Startup Script    |
+| 2 | https://github.com/sipeed/picoclaw | Lightweight AI assistant — download the Linux ARM64 (arm64) build and extract onto the device | LuCI → Startup → Local Startup Script |
 | 3 | https://pumpkinmc.org/            | Minecraft server — very fast, low memory footprint                                  | Needs to be compiled for OpenWrt         |
 
 ---
@@ -146,7 +155,7 @@ Reduces firmware size by approx. 50–100 MB:
 
 ## Special Thanks
 
-- [xuxin1955/Actions-immortalwrt](https://github.com/xuxin1955/Actions-immortalwrt) — Thanks to the author for the technology
+- [xuxin1955/Actions](https://github.com/xuxin1955/Actions) — Thanks to the author for the technology
 - [lkiuyu/immortalwrt](https://github.com/lkiuyu/immortalwrt) — Thanks to the author for driver and kernel fixes
 
 ## Credits

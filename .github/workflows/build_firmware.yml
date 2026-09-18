@@ -262,6 +262,12 @@ jobs:
         ! grep -A20 '^define FeedSourcesAppendOPKG' openwrt/include/feeds.mk \
           | grep -q 'src/gz %d_core %U/targets/aarch64_generic/packages'
 
+    - name: Verify generated package repositories
+      run: |
+        set -Eeuo pipefail
+        chmod +x "$GITHUB_WORKSPACE/scripts/verify_package_repository_generation.sh"
+        "$GITHUB_WORKSPACE/scripts/verify_package_repository_generation.sh" "$GITHUB_WORKSPACE/openwrt"
+
     - name: Prepare trusted source archives
       timeout-minutes: 60
       run: |

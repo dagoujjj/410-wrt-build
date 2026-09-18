@@ -236,6 +236,32 @@ jobs:
         ! grep -q '%U/targets/%S' "$feed_file"
         echo "Configured package feeds for aarch64_generic."
 
+    - name: Remove unavailable binary package repositories
+      run: |
+        set -Eeuo pipefail
+        python3 - <<'PY'
+        from pathlib import Path
+
+        feed_file = Path("openwrt/include/feeds.mk")
+        text = feed_file.read_text()
+        removals = {
+            "FeedSourcesAppendAPK": "echo '%U/targets/aarch64_generic/packages/packages.adb';",
+            "FeedSourcesAppendOPKG": "echo 'src/gz %d_core %U/targets/aarch64_generic/packages';",
+        }
+        for definition, unavailable in removals.items():
+            start = text.index(f"define {definition}")
+            end = text.index("endef", start)
+            block = text[start:end]
+            if unavailable not in block:
+                raise SystemExit(f"The unavailable {definition} repository was not found.")
+            text = text[:start] + block.replace(unavailable, "", 1) + text[end:]
+        feed_file.write_text(text)
+        PY
+        ! grep -A20 '^define FeedSourcesAppendAPK' openwrt/include/feeds.mk \
+          | grep -q '%U/targets/aarch64_generic/packages/packages.adb'
+        ! grep -A20 '^define FeedSourcesAppendOPKG' openwrt/include/feeds.mk \
+          | grep -q 'src/gz %d_core %U/targets/aarch64_generic/packages'
+
     - name: Prepare trusted source archives
       timeout-minutes: 60
       run: |
@@ -661,13 +687,30 @@ jobs:
           repository_file=$(find /mnt/openwrt/build_dir -type f \
             -path '*/etc/apk/repositories.d/distfeeds.list' -print -quit)
           test -n "$repository_file"
-          grep -Eq '^https://downloads\.immortalwrt\.org/.*/targets/aarch64_generic/' "$repository_file"
+          mapfile -t actual_repositories < <(grep -Ev '^(#|[[:space:]]*$)' "$repository_file" | sort)
+          expected_repositories=(
+            https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/base/packages.adb
+            https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/packages/packages.adb
+            https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/luci/packages.adb
+            https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/routing/packages.adb
+            https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/telephony/packages.adb
+          )
         else
           repository_file=$(find /mnt/openwrt/build_dir -type f \
             -path '*/etc/opkg/distfeeds.conf' -print -quit)
           test -n "$repository_file"
-          grep -Eq '^src/gz[[:space:]].*https://downloads\.immortalwrt\.org/.*/targets/aarch64_generic/' "$repository_file"
+          mapfile -t actual_repositories < <(awk '$1 == "src/gz" { print $NF }' "$repository_file" | sort)
+          expected_repositories=(
+            https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/base
+            https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/packages
+            https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/luci
+            https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/routing
+            https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/telephony
+          )
         fi
+        mapfile -t sorted_expected < <(printf '%s\n' "${expected_repositories[@]}" | sort)
+        diff -u <(printf '%s\n' "${sorted_expected[@]}") \
+          <(printf '%s\n' "${actual_repositories[@]}")
         if grep -Eq 'downloads\.immortalwrt\.org/.*/targets/msm89xx([/[:space:]]|$)' "$repository_file"; then
           echo "::error::The effective runtime repository uses the unsupported msm89xx binary-feed path."
           exit 1

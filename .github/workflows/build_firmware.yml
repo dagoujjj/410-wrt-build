@@ -409,6 +409,69 @@ jobs:
         set -Eeuo pipefail
         cd openwrt
         make defconfig
+        kernel_options=(
+          CONFIG_IP_ADVANCED_ROUTER=y
+          CONFIG_IP_MULTIPLE_TABLES=y
+          CONFIG_IP_ROUTE_MULTIPATH=y
+          CONFIG_IP_ROUTE_VERBOSE=y
+          CONFIG_NETFILTER_XT_TARGET_MARK=m
+          CONFIG_NETFILTER_XT_TARGET_CONNMARK=m
+          CONFIG_NETFILTER_XT_TARGET_TPROXY=m
+          CONFIG_NETFILTER_XT_MATCH_MARK=m
+          CONFIG_NETFILTER_XT_MATCH_CONNMARK=m
+          CONFIG_NETFILTER_XT_MATCH_SOCKET=m
+          CONFIG_NETFILTER_XT_MATCH_OWNER=m
+          CONFIG_NETFILTER_XT_MATCH_CGROUP=m
+          CONFIG_XFRM_USER=m
+          CONFIG_XFRM_ALGO=m
+          CONFIG_XFRM_ESP=m
+          CONFIG_XFRM_AH=m
+          CONFIG_NFT_XFRM=m
+          CONFIG_PPPOE=m
+          CONFIG_NET_VRF=m
+          CONFIG_BONDING=m
+          CONFIG_NET_TEAM=m
+          CONFIG_IPVLAN=m
+          CONFIG_MACVTAP=m
+          CONFIG_VXLAN=m
+          CONFIG_GENEVE=m
+          CONFIG_NFT_TUNNEL=m
+          CONFIG_NET_IPIP=m
+          CONFIG_NET_IPGRE=m
+          CONFIG_NET_IPGRE_DEMUX=m
+          CONFIG_NET_FOU=m
+          CONFIG_NET_FOU_IP_TUNNELS=m
+          CONFIG_IPV6_SIT=m
+          CONFIG_OVPN=m
+          CONFIG_USB_NET_CDC_MBIM=m
+          CONFIG_USB_NET_QMI_WWAN=m
+          CONFIG_USB_ACM=m
+          CONFIG_MHI_BUS=m
+          CONFIG_MHI_BUS_EP=m
+          CONFIG_MHI_WWAN_CTRL=m
+          CONFIG_MHI_WWAN_MBIM=m
+          CONFIG_NET_CLS_BPF=m
+          CONFIG_NET_ACT_BPF=m
+          CONFIG_XDP_SOCKETS=m
+          CONFIG_NFT_QUEUE=m
+          CONFIG_NFT_SYNPROXY=m
+          CONFIG_NET_ACT_CT=m
+          CONFIG_NET_ACT_TUNNEL_KEY=m
+          CONFIG_IP_NF_TARGET_REDIRECT=m
+          CONFIG_IP_NF_TARGET_MASQUERADE=m
+          CONFIG_IP_VS=m
+          CONFIG_NF_CT_PROTO_SCTP=m
+        )
+        kernel_configs=(target/linux/msm89xx/config-*)
+        test -f "${kernel_configs[0]}"
+        for kernel_config in "${kernel_configs[@]}"; do
+          for option in "${kernel_options[@]}"; do
+            grep -qx "$option" "$kernel_config" || {
+              echo "::error::Kernel option is missing or has the wrong value: $option ($kernel_config)"
+              exit 1
+            }
+          done
+        done
         required_packages=(
           luci-ssl-openssl wpad-basic-openssl travelmate luci-app-travelmate
           dnsmasq-full luci-app-adblock-fast luci-app-ttyd mwan3 kmod-dummy

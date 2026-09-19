@@ -505,9 +505,18 @@ jobs:
             }
           done
         done
+        # Linux 6.18 adds IP_VS_DEBUG. Keep it explicit so the kernel's
+        # syncconfig step cannot stop for an unanswered new-symbol prompt.
+        for kernel_config in "${kernel_configs[@]}"; do
+          grep -Eq '^(CONFIG_IP_VS_DEBUG=n|# CONFIG_IP_VS_DEBUG is not set)$' "$kernel_config" || {
+            echo "::error::IP_VS_DEBUG must be explicitly disabled: $kernel_config"
+            exit 1
+          }
+        done
         required_packages=(
           luci-ssl-openssl wpad-basic-openssl travelmate luci-app-travelmate
           dnsmasq-full luci-app-adblock-fast luci-app-ttyd mwan3 kmod-dummy
+          kmod-nf-ipvs
         )
         for pkg in "${required_packages[@]}"; do
           grep -q "^CONFIG_PACKAGE_${pkg}=y$" .config || {
@@ -700,6 +709,8 @@ jobs:
             https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/packages/packages.adb
             https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/luci/packages.adb
             https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/routing/packages.adb
+            https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/smpackage/packages.adb
+            https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/store/packages.adb
             https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/telephony/packages.adb
           )
         else
@@ -712,6 +723,8 @@ jobs:
             https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/packages
             https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/luci
             https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/routing
+            https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/smpackage
+            https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/store
             https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/telephony
           )
         fi

@@ -13,6 +13,13 @@
 # Select Argon as the default theme when available.
 sed -i 's/luci-theme-bootstrap/luci-theme-argon/g' feeds/luci/collections/luci/Makefile 2>/dev/null || true
 
+# IPVS kernel options are provided by the matching kernel module package.
+# Select it here so its complete Kconfig contract is applied before the
+# kernel's non-interactive syncconfig step.
+test -f .config
+sed -i -E '/^CONFIG_PACKAGE_kmod-nf-ipvs=|^# CONFIG_PACKAGE_kmod-nf-ipvs is not set$/d' .config
+printf '%s\n' 'CONFIG_PACKAGE_kmod-nf-ipvs=y' >> .config
+
 kernel_options=(
   CONFIG_IP_ADVANCED_ROUTER=y
   CONFIG_IP_MULTIPLE_TABLES=y
@@ -65,6 +72,7 @@ kernel_options=(
   CONFIG_IP_NF_TARGET_MASQUERADE=m
   CONFIG_IP_VS=m
   CONFIG_IP_VS_IPV6=y
+  CONFIG_IP_VS_DEBUG=n
   CONFIG_NF_CT_PROTO_SCTP=y
 )
 

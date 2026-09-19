@@ -236,6 +236,38 @@ jobs:
         ! grep -q '%U/targets/%S' "$feed_file"
         echo "Configured package feeds for aarch64_generic."
 
+    - name: Remove unavailable binary package repositories
+      run: |
+        set -Eeuo pipefail
+        python3 - <<'PY'
+        from pathlib import Path
+
+        feed_file = Path("openwrt/include/feeds.mk")
+        text = feed_file.read_text()
+        removals = {
+            "FeedSourcesAppendAPK": "echo '%U/targets/aarch64_generic/packages/packages.adb';",
+            "FeedSourcesAppendOPKG": "echo 'src/gz %d_core %U/targets/aarch64_generic/packages';",
+        }
+        for definition, unavailable in removals.items():
+            start = text.index(f"define {definition}")
+            end = text.index("endef", start)
+            block = text[start:end]
+            if unavailable not in block:
+                raise SystemExit(f"The unavailable {definition} repository was not found.")
+            text = text[:start] + block.replace(unavailable, "", 1) + text[end:]
+        feed_file.write_text(text)
+        PY
+        ! grep -A20 '^define FeedSourcesAppendAPK' openwrt/include/feeds.mk \
+          | grep -q '%U/targets/aarch64_generic/packages/packages.adb'
+        ! grep -A20 '^define FeedSourcesAppendOPKG' openwrt/include/feeds.mk \
+          | grep -q 'src/gz %d_core %U/targets/aarch64_generic/packages'
+
+    - name: Verify generated package repositories
+      run: |
+        set -Eeuo pipefail
+        chmod +x "$GITHUB_WORKSPACE/scripts/verify_package_repository_generation.sh"
+        "$GITHUB_WORKSPACE/scripts/verify_package_repository_generation.sh" "$GITHUB_WORKSPACE/openwrt"
+
     - name: Prepare trusted source archives
       timeout-minutes: 60
       run: |
@@ -409,6 +441,70 @@ jobs:
         set -Eeuo pipefail
         cd openwrt
         make defconfig
+        kernel_options=(
+          CONFIG_IP_ADVANCED_ROUTER=y
+          CONFIG_IP_MULTIPLE_TABLES=y
+          CONFIG_IP_ROUTE_MULTIPATH=y
+          CONFIG_IP_ROUTE_VERBOSE=y
+          CONFIG_NETFILTER_XT_TARGET_MARK=m
+          CONFIG_NETFILTER_XT_TARGET_CONNMARK=m
+          CONFIG_NETFILTER_XT_TARGET_TPROXY=m
+          CONFIG_NETFILTER_XT_MATCH_MARK=m
+          CONFIG_NETFILTER_XT_MATCH_CONNMARK=m
+          CONFIG_NETFILTER_XT_MATCH_SOCKET=m
+          CONFIG_NETFILTER_XT_MATCH_OWNER=m
+          CONFIG_NETFILTER_XT_MATCH_CGROUP=m
+          CONFIG_XFRM_USER=m
+          CONFIG_XFRM_ALGO=m
+          CONFIG_XFRM_ESP=m
+          CONFIG_XFRM_AH=m
+          CONFIG_NFT_XFRM=m
+          CONFIG_PPPOE=m
+          CONFIG_NET_VRF=m
+          CONFIG_BONDING=m
+          CONFIG_NET_TEAM=m
+          CONFIG_IPVLAN=m
+          CONFIG_MACVTAP=m
+          CONFIG_VXLAN=m
+          CONFIG_GENEVE=m
+          CONFIG_NFT_TUNNEL=m
+          CONFIG_NET_IPIP=m
+          CONFIG_NET_IPGRE=m
+          CONFIG_NET_IPGRE_DEMUX=m
+          CONFIG_NET_FOU=m
+          CONFIG_NET_FOU_IP_TUNNELS=y
+          CONFIG_IPV6_SIT=m
+          CONFIG_OVPN=m
+          CONFIG_USB_NET_CDC_MBIM=m
+          CONFIG_USB_NET_QMI_WWAN=m
+          CONFIG_USB_ACM=m
+          CONFIG_MHI_BUS=m
+          CONFIG_MHI_BUS_EP=m
+          CONFIG_MHI_WWAN_CTRL=m
+          CONFIG_MHI_WWAN_MBIM=m
+          CONFIG_NET_CLS_BPF=m
+          CONFIG_NET_ACT_BPF=m
+          CONFIG_XDP_SOCKETS=m
+          CONFIG_NFT_QUEUE=m
+          CONFIG_NFT_SYNPROXY=m
+          CONFIG_NET_ACT_CT=m
+          CONFIG_NET_ACT_TUNNEL_KEY=m
+          CONFIG_IP_NF_TARGET_REDIRECT=m
+          CONFIG_IP_NF_TARGET_MASQUERADE=m
+          CONFIG_IP_VS=m
+          CONFIG_IP_VS_IPV6=y
+          CONFIG_NF_CT_PROTO_SCTP=y
+        )
+        kernel_configs=(target/linux/msm89xx/config-*)
+        test -f "${kernel_configs[0]}"
+        for kernel_config in "${kernel_configs[@]}"; do
+          for option in "${kernel_options[@]}"; do
+            grep -qx "$option" "$kernel_config" || {
+              echo "::error::Kernel option is missing or has the wrong value: $option ($kernel_config)"
+              exit 1
+            }
+          done
+        done
         required_packages=(
           luci-ssl-openssl wpad-basic-openssl travelmate luci-app-travelmate
           dnsmasq-full luci-app-adblock-fast luci-app-ttyd mwan3 kmod-dummy
@@ -598,13 +694,30 @@ jobs:
           repository_file=$(find /mnt/openwrt/build_dir -type f \
             -path '*/etc/apk/repositories.d/distfeeds.list' -print -quit)
           test -n "$repository_file"
-          grep -Eq '^https://downloads\.immortalwrt\.org/.*/targets/aarch64_generic/' "$repository_file"
+          mapfile -t actual_repositories < <(grep -Ev '^(#|[[:space:]]*$)' "$repository_file" | sort)
+          expected_repositories=(
+            https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/base/packages.adb
+            https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/packages/packages.adb
+            https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/luci/packages.adb
+            https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/routing/packages.adb
+            https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/telephony/packages.adb
+          )
         else
           repository_file=$(find /mnt/openwrt/build_dir -type f \
             -path '*/etc/opkg/distfeeds.conf' -print -quit)
           test -n "$repository_file"
-          grep -Eq '^src/gz[[:space:]].*https://downloads\.immortalwrt\.org/.*/targets/aarch64_generic/' "$repository_file"
+          mapfile -t actual_repositories < <(awk '$1 == "src/gz" { print $NF }' "$repository_file" | sort)
+          expected_repositories=(
+            https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/base
+            https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/packages
+            https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/luci
+            https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/routing
+            https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/telephony
+          )
         fi
+        mapfile -t sorted_expected < <(printf '%s\n' "${expected_repositories[@]}" | sort)
+        diff -u <(printf '%s\n' "${sorted_expected[@]}") \
+          <(printf '%s\n' "${actual_repositories[@]}")
         if grep -Eq 'downloads\.immortalwrt\.org/.*/targets/msm89xx([/[:space:]]|$)' "$repository_file"; then
           echo "::error::The effective runtime repository uses the unsupported msm89xx binary-feed path."
           exit 1

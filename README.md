@@ -1,171 +1,85 @@
-# 高通410随身WiFi —— 在线云编译 OpenWrt
+# 高通 410 随身 WiFi 固件云编译
 
-经常遇见找不到好的固件，不是软件源不能安装，就是版本太老，要不就是别人固件装了自己不需要的插件功能。那就直接编译一个属于自己的openwrt刷机包，简单几步就可以完成编译，本地不需要装任何环境，不需要懂 Linux，不需要懂编译，编译好的固件包可以使用刷机工具一键刷入。
+> If you cannot read Chinese, please use translation software.
 
-- 使用已验证并锁定的 ImmortalWrt 上游 commit 构建；需要更新时先手动运行上游验证工作流
-- 所有设备配置内置指定软件包和配置中选择的 kmod-*，包括 `kmod-dummy`
-- 固件运行时软件源使用官方 ImmortalWrt 地址，并将二进制包架构指向 `aarch64_generic`，不使用不存在的 `targets/msm89xx`
-- 可通过工作流输入添加额外软件包；默认构建不附带额外软件包
-- 底包极致优化，不用担心各种bug。
----
+基于 ImmortalWrt 的高通 410 随身 WiFi 固件构建项目。通过 GitHub Actions 在线更新上游、构建刷机工具或编译固件，无需配置本地编译环境。
 
-## 编译固件步骤
+## 部署与配置
 
-1. 先把本仓库Fork到你自己账号下
-![拉流仓库](img/0.png)
+### 1. Fork 仓库
 
-2. 手动触发编译：你的仓库 → **Actions** → **Build ImmortalWrt Snapdragon 410 Firmware** → **Run workflow** → 选择设备型号 → 如需额外软件包再填写，默认留空 → Run workflow 开始编译
-![编译教程](img/1.png)
+点击仓库右上角的 **Fork**，将本仓库复制到自己的 GitHub 账号。
 
-3. 编译约⏱️ 1.5-2 小时，插件越多时间越长.
-![编译过程](img/2.png)
+### 2. 运行 Actions
 
-4. 上面出现绿色对号，就代表编译成功了，你的仓库 → **releases** → 下载固件包
-![下载固件包](img/3.png)
+进入 Fork 后的仓库，打开 **Actions** 页面，按需选择工作流并点击 **Run workflow**：
 
-5. 如果设备已经运行 Linux 或 OpenWrt，请使用 Release 中的 `flash_openstick.bat` 或其他配套 fastboot 刷机流程更新。当前 wf2 镜像会重写 `boot` 和 `rootfs` 分区，尚未提供经过目标设备验证的 LuCI 动态升级/sysupgrade 路径，不要使用通用升级入口。
-![升级固件](img/4.png)
+- **Verify Upstream**：检查并更新锁定的上游源码版本。
+- **Build ImmortalWrt Snapdragon 410 Firmware**：选择设备型号并构建固件。
+- **Build Flash Tool**：构建刷机工具。
 
-如果你设备没刷过linux或者openwrt，还是原版安卓，就按下面教程刷入，注意必须备份分区。
-![安卓刷入openwrt固件](img/5.png)
+构建固件时可填写额外软件包名称；不需要额外软件包时保持为空。构建完成后，在工作流运行页面或 Releases 中下载压缩包。
 
-如果遇到手机卡插入设备不能用情况，多插拔几次，多次还是不识别手机卡，可以尝试以下步骤，你要是没备份安卓的分区，那就没办法了，在讨论区留言看看有没有好心人给你一份吧。
-![刷回固件](img/6.png)
+## 支持的设备
 
----
+- UFI003
+- UFI001B / UFI001C
+- UFI103S
+- JZ02 V10
+- QRZL903
+- W001
+- UZ801
+- MF32 / MF601
+- WF2
+- SP970 V10 / V11
 
-### 已内置的软件包和内核模块
+请选择与设备完全匹配的型号。刷入错误固件可能导致设备无法启动。
 
-所有设备配置都内置以下软件包：`luci-ssl-openssl`、`wpad-basic-openssl`、`travelmate`、`luci-app-travelmate`、`dnsmasq-full`、`luci-app-adblock-fast`、`luci-app-ttyd`、`mwan3`。每个设备配置中已选择的 `kmod-*` 均以 `=y` 编译，另含 `kmod-dummy`；无需在额外软件包输入中重复添加。
+## 刷入固件
 
-固件目标仍为 `msm89xx`，但官方二进制软件源没有 `targets/msm89xx` 路径，运行时统一使用存在的 `aarch64_generic` 包架构路径。
+解压固件压缩包，确认目录中包含 `boot.img`、`system.img`、`upgrade_patch.bat` 和 `upgrade_patch.sh`。
 
-### 推荐插件配置（可直接复制粘贴）
+刷机前请备份重要数据，保持 USB 连接稳定。刷机过程会擦除并重写 `boot` 与 `rootfs` 分区；当前发布物不提供经过目标设备验证的 LuCI 动态升级或通用 sysupgrade 入口。
 
-- 基础：`luci-app-ttyd`
-- 科学上网：`luci-app-openclash`
-- 去广告：`luci-app-adbyby-plus,luci-app-adblock`
-- 常用组合：`luci-app-ttyd,luci-app-adbyby-plus,luci-app-accesscontrol`
----
-## 支持的设备型号
+### Windows
 
-| 型号 | 说明 |
-|-----|------|
-| ufi003 | 默认，手里有这个板子，优化比较好 |
-| ufi001c | 已支持 |
-| ufi001b | 已支持 |
-| ufi103s | 已支持 |
-| qrzl903 | 已支持 |
-| w001 | 已支持 |
-| uz801 | 已支持 |
-| mf32 | 已支持  [另外一个库 - 安卓电池机破解](https://github.com/x7780/MF32T_MB_V01) |
-| mf601 | 已支持 |
-| wf2 | 已支持 |
-| jz02v10 | 已支持 |
-| sp970v11 | 已支持 |
-| sp970v10 | 已支持 |
+1. 确认目录中存在 `adb.exe` 和 `fastboot.exe`，或已将 ADB 与 Fastboot 加入系统 `PATH`。
+2. 连接设备并启用 ADB 调试。
+3. 双击运行 `upgrade_patch.bat`，按英文提示操作。
 
----
+### Linux
 
-## 项目目录与文件说明
+1. 安装 `adb` 和 `fastboot`，并确认当前用户具有访问设备的权限。
+2. 连接设备并启用 ADB 调试。
+3. 在解压目录执行：
 
-| 路径 | 用途说明 |
-|------|---------|
-| `config/` | 各设备型号的编译配置文件，文件名对应设备型号（如 `ufi003.config`） |
-| `files/` | 编译后覆盖到固件的系统配置文件 |
-| `img/` | README 文档中使用的教程截图 |
-| `scripts/` | 编译过程中执行的辅助脚本 |
-| `工具与脚本/` | 刷机相关工具和辅助脚本合集，包括9008驱动、基带和完整刷机脚本 |
-| `flash_assets/` | 编译成功后集成到刷机包中的底层文件和补丁脚本 |
-| `diy-part1.sh` | 编译第一阶段自定义脚本，在拉取源码后执行（添加软件源、打补丁等） |
-| `diy-part2.sh` | 编译第二阶段自定义脚本，在生成默认配置后执行（修改配置、添加文件等） |
-| `verify_upstream.yml` | 手动验证上游源码并更新锁定 commit，不执行固件编译 |
-| `upstream_lock.txt` | 手动验证的上游源码 commit，保证构建可复现 |
-| `极简的包名.txt` | 常用插件包名速查列表备份，没什么大用，备份参考用 |
-| `.config` | 默认编译配置文件，定义全局编译选项 |
+```bash
+chmod +x upgrade_patch.sh
+./upgrade_patch.sh
+```
 
----
+两个脚本都会检查 ADB、Fastboot、`boot.img` 和 `system.img`。缺少任意必要项时不会开始刷写。
 
-### 已启用的默认插件（项目基础组件）不要重复添加。
+## 默认管理信息
 
-| 序号 | 插件 | 说明 | 菜单位置 |
-|-----|-----|------|---------|
-| 1 | luci-theme-argon  | argon主题插件 | 国内比较火的主题 |
-| 2 | luci-app-package-manager | 软件包管理 | 系统 → 软件包 |
-| 3 | luci-app-firewallr | 防火墙插件 | 系统 → 防火墙 |
-### 已启用的默认驱动模块，请不要重复添加。
+- 管理地址：`192.168.1.1`
+- 用户名：`root`
+- 默认密码：无
 
-### 已启用的默认驱动模块
+首次登录后请立即设置管理密码。
 
-所有设备配置中已选择的内核模块均以 `=y` 内置；请勿在额外软件包输入中重复添加。`kmod-dummy` 已在所有设备配置中内置。
-|-----|-----|------|---------|
-| 4 | kmod-usb-common | USB 公共模块 | 内核模块 |
-| 5 | kmod-usb-core | USB 核心模块 | 内核模块 |
-| 6 | kmod-usb-gadget | USB Gadget 框架 | 内核模块 |
-| 7 | kmod-usb-gadget-eth | USB Gadget 以太网 | 内核模块 |
-| 8 | kmod-usb-gadget-functionfs | USB Gadget FunctionFS | 内核模块 |
-| 9 | kmod-usb-gadget-mass-storage | USB Gadget 大容量存储 | 内核模块 |
-| 10 | kmod-usb-gadget-ncm | USB Gadget NCM 网络 | 内核模块 |
-| 11 | kmod-usb-gadget-serial | USB Gadget 串口 | 内核模块 |
-| 12 | kmod-usb-lib-composite | USB 复合设备库 | 内核模块 |
-| 13 | kmod-usb-net | USB 网络驱动 | 内核模块 |
-| 14 | kmod-usb-net-cdc-ether | USB CDC Ethernet 驱动 | 内核模块 |
-| 15 | kmod-usb-net-cdc-ncm | USB CDC NCM 驱动 | 内核模块 |
-| 16 | kmod-usb-net-huawei-cdc-ncm | 华为 CDC NCM 驱动 | 内核模块 |
-| 17 | kmod-usb-net-rndis | USB RNDIS 网络驱动 | 内核模块 |
-| 18 | kmod-usb-serial | USB 串口驱动 | 内核模块 |
-| 19 | kmod-usb-serial-option | USB 串口 Option 驱动 | 内核模块 |
-| 20 | kmod-usb-serial-wwan | USB 串口 WWAN 驱动 | 内核模块 |
-| 21 | kmod-usb-wdm | USB WDM 驱动 | 内核模块 |
-### 已添加第三方源码插件库。
+## 项目说明
 
-| 序号 | 地址 | 说明 | 使用方法 |
-|-----|-----|------|------|
-| 1 | https://github.com/kenzok8/small-package | 常用OpenWrt软件包源码合集 | 在编译时填写插件名 |
----
+- 固件使用已验证并锁定的 ImmortalWrt 上游版本。
+- 如需更新源码，请先运行上游检查工作流，再构建固件。
+- 固件使用官方 ImmortalWrt 软件源，二进制包架构为 `aarch64_generic`。
+- 每个设备配置均内置指定软件包、所选 `kmod-*` 和 `kmod-dummy`。
+- 可通过构建工作流按需添加额外软件包。
 
-### 推荐好用的工具。
+## 致谢
 
-| 序号 | 地址 | 说明 | 使用方法 |
-|-----|-----|------|------|
-| 1 | https://github.com/3899/SimAdmin | 非常好用的sim卡管理工具，作者还在陆续更新 | 进入后台-启动项-本地启动脚本 |
-| 2 | https://github.com/sipeed/picoclaw | 不占内存的小龙虾，下载 Linux ARM64 (arm64) 版本解压到设备上 | 进入后台-启动项-本地启动脚本 |
-| 3 | https://pumpkinmc.org/ | 我的世界服务端，运行速度非常快，占用内存小| openwrt需要自行编译版本 |
----
+感谢 OpenWrt、ImmortalWrt、GitHub Actions 及相关开源项目的贡献者。
 
-### 已禁用的内核调试信息
+## 许可证
 
-减少固件体积约50-100MB：
-
-| 配置项 | 说明 | 状态 |
-|-------|------|------|
-| CONFIG_KERNEL_DEBUG_FS | 调试文件系统 | 禁用 太占内存 |
-| CONFIG_KERNEL_DEBUG_KERNEL | 内核调试日志 | 禁用 太占内存 |
-| CONFIG_KERNEL_DEBUG_INFO | 完整调试符号 | 禁用 太占内存 |
-| CONFIG_KERNEL_KALLSYMS | 内核符号表 | 禁用 太占内存 |
-
----
-
-## 特别感谢
-
-- [xuxin1955/Actions](https://github.com/xuxin1955/Actions) 感谢作者提供技术
-- [lkiuyu/immortalwrt](https://github.com/lkiuyu/immortalwrt) 感谢作者对驱动和内核修正
-
-## Credits
-
-- [Microsoft Azure](https://azure.microsoft.com)
-- [GitHub Actions](https://github.com/features/actions)
-- [OpenWrt](https://github.com/openwrt/openwrt)
-- [ImmortalWrt](https://github.com/xuxin1955/immortalwrt)
-- [coolsnowwolf/lede](https://github.com/coolsnowwolf/lede)
-- [Mikubill/transfer](https://github.com/Mikubill/transfer)
-- [softprops/action-gh-release](https://github.com/softprops/action-gh-release)
-- [Mattraks/delete-workflow-runs](https://github.com/Mattraks/delete-workflow-runs)
-- [dev-drprasad/delete-older-releases](https://github.com/dev-drprasad/delete-older-releases)
-- [peter-evans/repository-dispatch](https://github.com/peter-evans/repository-dispatch)
-
-
-
-## License
-
-[MIT](https://github.com/P3TERX/Actions-OpenWrt/blob/main/LICENSE) © [**P3TERX**](https://p3terx.com)
+本项目遵循仓库中的许可证文件。第三方源码和组件分别遵循其各自许可证。

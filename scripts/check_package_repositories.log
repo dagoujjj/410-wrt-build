@@ -1,0 +1,45 @@
+manager|url|attempt|http_status|curl_exit|result|error
+apk|https://downloads.immortalwrt.org/snapshots/targets/aarch64_generic/packages/packages.adb|1|404|22|failed|curl: (22) The requested URL returned error: 404
+apk|https://downloads.immortalwrt.org/snapshots/targets/aarch64_generic/packages/packages.adb|2|404|22|failed|curl: (22) The requested URL returned error: 404
+apk|https://downloads.immortalwrt.org/snapshots/targets/aarch64_generic/packages/packages.adb|3|404|22|failed|curl: (22) The requested URL returned error: 404
+RESULT|apk|https://downloads.immortalwrt.org/snapshots/targets/aarch64_generic/packages/packages.adb|RETIRED_AFTER_3_FAILURES
+apk|https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/base/packages.adb|1|200|0|reachable|
+RESULT|apk|https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/base/packages.adb|REACHABLE
+apk|https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/packages/packages.adb|1|200|0|reachable|
+RESULT|apk|https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/packages/packages.adb|REACHABLE
+apk|https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/luci/packages.adb|1|200|0|reachable|
+RESULT|apk|https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/luci/packages.adb|REACHABLE
+apk|https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/routing/packages.adb|1|200|0|reachable|
+RESULT|apk|https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/routing/packages.adb|REACHABLE
+apk|https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/telephony/packages.adb|1|200|0|reachable|
+RESULT|apk|https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/telephony/packages.adb|REACHABLE
+apk|https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/video/packages.adb|1|404|22|failed|curl: (22) The requested URL returned error: 404
+apk|https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/video/packages.adb|2|404|22|failed|curl: (22) The requested URL returned error: 404
+apk|https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/video/packages.adb|3|404|22|failed|curl: (22) The requested URL returned error: 404
+RESULT|apk|https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/video/packages.adb|RETIRED_AFTER_3_FAILURES
+apk|https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/openstick/packages.adb|1|404|22|failed|curl: (22) The requested URL returned error: 404
+apk|https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/openstick/packages.adb|2|404|22|failed|curl: (22) The requested URL returned error: 404
+apk|https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/openstick/packages.adb|3|404|22|failed|curl: (22) The requested URL returned error: 404
+RESULT|apk|https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/openstick/packages.adb|RETIRED_AFTER_3_FAILURES
+opkg|https://downloads.immortalwrt.org/snapshots/targets/aarch64_generic/packages|1|404|22|failed|curl: (22) The requested URL returned error: 404
+opkg|https://downloads.immortalwrt.org/snapshots/targets/aarch64_generic/packages|2|404|22|failed|curl: (22) The requested URL returned error: 404
+opkg|https://downloads.immortalwrt.org/snapshots/targets/aarch64_generic/packages|3|404|22|failed|curl: (22) The requested URL returned error: 404
+RESULT|opkg|https://downloads.immortalwrt.org/snapshots/targets/aarch64_generic/packages|RETIRED_AFTER_3_FAILURES
+opkg|https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/base|1|200|0|reachable|
+RESULT|opkg|https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/base|REACHABLE
+opkg|https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/packages|1|200|0|reachable|
+RESULT|opkg|https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/packages|REACHABLE
+opkg|https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/luci|1|200|0|reachable|
+RESULT|opkg|https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/luci|REACHABLE
+opkg|https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/routing|1|200|0|reachable|
+RESULT|opkg|https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/routing|REACHABLE
+opkg|https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/telephony|1|200|0|reachable|
+RESULT|opkg|https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/telephony|REACHABLE
+opkg|https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/video|1|404|22|failed|curl: (22) The requested URL returned error: 404
+opkg|https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/video|2|404|22|failed|curl: (22) The requested URL returned error: 404
+opkg|https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/video|3|404|22|failed|curl: (22) The requested URL returned error: 404
+RESULT|opkg|https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/video|RETIRED_AFTER_3_FAILURES
+opkg|https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/openstick|1|404|22|failed|curl: (22) The requested URL returned error: 404
+opkg|https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/openstick|2|404|22|failed|curl: (22) The requested URL returned error: 404
+opkg|https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/openstick|3|404|22|failed|curl: (22) The requested URL returned error: 404
+RESULT|opkg|https://downloads.immortalwrt.org/snapshots/packages/aarch64_generic/openstick|RETIRED_AFTER_3_FAILURES

@@ -13,12 +13,70 @@
 # Select Argon as the default theme when available.
 sed -i 's/luci-theme-bootstrap/luci-theme-argon/g' feeds/luci/collections/luci/Makefile 2>/dev/null || true
 
-# IPv4 policy routing is provided by the upstream configuration.
-# CONFIG_KERNEL_IP_ADVANCED_ROUTER 在 OpenWrt Config.in 中无对应 wrapper，必须用此方式
-#for cfg in target/linux/msm89xx/config-*; do
-#  grep -q 'CONFIG_IP_ADVANCED_ROUTER' "$cfg" || echo 'CONFIG_IP_ADVANCED_ROUTER=y' >> "$cfg"
-#  grep -q 'CONFIG_IP_MULTIPLE_TABLES' "$cfg" || echo 'CONFIG_IP_MULTIPLE_TABLES=y' >> "$cfg"
-#done
+kernel_options=(
+  CONFIG_IP_ADVANCED_ROUTER=y
+  CONFIG_IP_MULTIPLE_TABLES=y
+  CONFIG_IP_ROUTE_MULTIPATH=y
+  CONFIG_IP_ROUTE_VERBOSE=y
+  CONFIG_NETFILTER_XT_TARGET_MARK=m
+  CONFIG_NETFILTER_XT_TARGET_CONNMARK=m
+  CONFIG_NETFILTER_XT_TARGET_TPROXY=m
+  CONFIG_NETFILTER_XT_MATCH_MARK=m
+  CONFIG_NETFILTER_XT_MATCH_CONNMARK=m
+  CONFIG_NETFILTER_XT_MATCH_SOCKET=m
+  CONFIG_NETFILTER_XT_MATCH_OWNER=m
+  CONFIG_NETFILTER_XT_MATCH_CGROUP=m
+  CONFIG_XFRM_USER=m
+  CONFIG_XFRM_ALGO=m
+  CONFIG_XFRM_ESP=m
+  CONFIG_XFRM_AH=m
+  CONFIG_NFT_XFRM=m
+  CONFIG_PPPOE=m
+  CONFIG_NET_VRF=m
+  CONFIG_BONDING=m
+  CONFIG_NET_TEAM=m
+  CONFIG_IPVLAN=m
+  CONFIG_MACVTAP=m
+  CONFIG_VXLAN=m
+  CONFIG_GENEVE=m
+  CONFIG_NFT_TUNNEL=m
+  CONFIG_NET_IPIP=m
+  CONFIG_NET_IPGRE=m
+  CONFIG_NET_IPGRE_DEMUX=m
+  CONFIG_NET_FOU=m
+  CONFIG_NET_FOU_IP_TUNNELS=y
+  CONFIG_IPV6_SIT=m
+  CONFIG_OVPN=m
+  CONFIG_USB_NET_CDC_MBIM=m
+  CONFIG_USB_NET_QMI_WWAN=m
+  CONFIG_USB_ACM=m
+  CONFIG_MHI_BUS=m
+  CONFIG_MHI_BUS_EP=m
+  CONFIG_MHI_WWAN_CTRL=m
+  CONFIG_MHI_WWAN_MBIM=m
+  CONFIG_NET_CLS_BPF=m
+  CONFIG_NET_ACT_BPF=m
+  CONFIG_XDP_SOCKETS=m
+  CONFIG_NFT_QUEUE=m
+  CONFIG_NFT_SYNPROXY=m
+  CONFIG_NET_ACT_CT=m
+  CONFIG_NET_ACT_TUNNEL_KEY=m
+  CONFIG_IP_NF_TARGET_REDIRECT=m
+  CONFIG_IP_NF_TARGET_MASQUERADE=m
+  CONFIG_IP_VS=m
+  CONFIG_IP_VS_IPV6=y
+  CONFIG_NF_CT_PROTO_SCTP=y
+)
+
+kernel_configs=(target/linux/msm89xx/config-*)
+test -f "${kernel_configs[0]}"
+for cfg in "${kernel_configs[@]}"; do
+  for option in "${kernel_options[@]}"; do
+    key=${option%%=*}
+    sed -i -E "/^${key}=|^# ${key} is not set$/d" "$cfg"
+    printf '%s\n' "$option" >> "$cfg"
+  done
+done
 
 
 # Optional local packages.
